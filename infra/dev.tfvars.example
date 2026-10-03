@@ -6,6 +6,8 @@ environment  = "dev"
 # IoT Lambda zip and API container image have been built and published.
 iot_lambda_zip_path  = null
 api_lambda_image_uri = null
+iot_database_url     = null
+iot_station_token    = null
 
 # Empty uses this stack's CloudFront hostname for API CORS.
 api_cors_origins = []

@@ -27,10 +27,26 @@ variable "environment" {
 }
 
 variable "iot_lambda_zip_path" {
-  description = "Path to a prebuilt IoT Lambda zip containing main.handler. Leave null to provision the rest of the infrastructure first."
+  description = "Path to a prebuilt IoT Lambda zip containing receiver.handler. Leave null to provision the rest of the infrastructure first."
   type        = string
   default     = null
   nullable    = true
+}
+
+variable "iot_database_url" {
+  description = "Neon pooled DATABASE_URL for the IoT receiver Lambda. Required when deploying the IoT zip."
+  type        = string
+  default     = null
+  nullable    = true
+  sensitive   = true
+}
+
+variable "iot_station_token" {
+  description = "Optional bearer token for the public IoT Function URL. When unset, ingest requests are unauthenticated."
+  type        = string
+  default     = null
+  nullable    = true
+  sensitive   = true
 }
 
 variable "api_lambda_image_uri" {

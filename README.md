@@ -2,6 +2,14 @@
 
 Topographic Assessment for National Adaptation Works.
 
+## Agent guidance
+
+Codex reads the repository guidance in `AGENTS.md` and the frontend-specific
+guidance in `client/AGENTS.md`. Product and evidence rules are documented in
+`CLAUDE.md` and `docs/project-vision.md`. The `.claude/` folder contains
+Claude Code agents, skills, hooks, and settings. Codex does not run those
+Claude-specific hooks or settings.
+
 ## Claude Code setup in this repo
 
 | Type | Name | Use it for |
@@ -10,7 +18,7 @@ Topographic Assessment for National Adaptation Works.
 | Agent | geospatial-reviewer | Read-only review of science and wording |
 | Agent | funding-data-analyst | DPWH and other funding data |
 | Agent | iot-firmware-engineer | ESP32 river and street stations |
-| Agent | dashboard-engineer | FastAPI backend and React dashboard |
+| Agent | dashboard-engineer | API and client integration notes |
 | Skill | study-area-setup | Add a river basin, rural upland, or urban area |
 | Skill | add-satellite-metric | Add any new satellite metric |
 | Skill | urban-imperviousness | Built-up, green space, night lights for cities |
@@ -25,6 +33,13 @@ Hooks:
 - PostToolUse: ruff on Python, flags em dashes, wrong labels for Hansen data, and accusatory words in user-facing files.
 
 Requirements: python3, ruff, earthengine-api.
+
+## Client
+
+The `client/` directory is a Next.js static export using pnpm and MapLibre.
+Run it locally with `cd client && pnpm install && pnpm dev`. A production build
+writes static files to `client/out/` for the S3 and CloudFront hosting in
+`infra/`.
 
 ## First prompts
 1. "Scaffold the repo based on CLAUDE.md with pyproject.toml, pipeline/run.py, and db/migrations/001_init.sql."

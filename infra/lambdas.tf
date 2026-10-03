@@ -44,13 +44,18 @@ resource "aws_iam_role" "iot_lambda" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
+resource "aws_iam_role_policy_attachment" "iot_lambda_logs" {
+  role       = aws_iam_role.iot_lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
 resource "aws_lambda_function" "iot" {
   count = local.deploy_iot_lambda ? 1 : 0
 
   function_name    = "${local.name}-iot"
   role             = aws_iam_role.iot_lambda.arn
   runtime          = "python3.12"
-  handler          = "main.handler"
+  handler          = "receiver.handler"
   filename         = var.iot_lambda_zip_path
   source_code_hash = try(filebase64sha256(var.iot_lambda_zip_path), null)
   package_type     = "Zip"
@@ -59,10 +64,21 @@ resource "aws_lambda_function" "iot" {
   timeout          = var.iot_timeout_seconds
   publish          = true
 
-  environment {
-    variables = {
-      TANAW_ENV = var.environment
+  depends_on = [aws_iam_role_policy_attachment.iot_lambda_logs]
+
+  lifecycle {
+    precondition {
+      condition     = try(trimspace(var.iot_database_url) != "", false)
+      error_message = "Set iot_database_url before deploying the IoT Lambda."
     }
+  }
+
+  environment {
+    variables = merge(
+      { TANAW_ENV = var.environment },
+      var.iot_database_url == null ? {} : { DATABASE_URL = var.iot_database_url },
+      var.iot_station_token == null ? {} : { STATION_TOKEN = var.iot_station_token }
+    )
   }
 }
 

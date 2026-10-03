@@ -9,6 +9,8 @@ Decision-support platform for DENR, LGUs, and DRRM offices. For each study area 
 
 TANAW shows patterns and correlations. It never claims wrongdoing. UI and reports say "spending pattern", "mismatch", "for review", never "corruption" or "anomaly proves".
 
+For frontend work, read `docs/project-vision.md` for the user journey, screen scope, evidence rules, and unresolved product decisions.
+
 ## Study area types
 Every study area has a `study_type`:
 | study_type | Example | Main question | Primary metrics |
@@ -27,7 +29,7 @@ Demo set: Pasig-Marikina-Tullahan (basin), Rodriguez/Antipolo uplands (rural), Q
 - `db/migrations/` PostgreSQL + PostGIS (Alembic, config in `alembic.ini`)
 - `api/` FastAPI (on demand analysis with cache, job polling)
 - `firmware/` ESP32 station (PlatformIO, Arduino)
-- `dashboard/` React + MapLibre
+- `client/` Next.js static export + MapLibre
 - `tests/` pytest
 
 ## Core conventions
@@ -72,6 +74,7 @@ Run every command below inside the project virtual environment `.venv`. The syst
 - Clean DPWH: `python -m funding.clean_dpwh funding/raw/<file>.csv`
 - Migrate: `alembic upgrade head` (preview SQL with `alembic upgrade head --sql`)
 - API: `uvicorn api.main:app --reload`
+- Client: `cd client && pnpm install && pnpm dev`
 - Firmware: `pio run -d firmware`
 
 ## Rules

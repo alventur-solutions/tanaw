@@ -3,14 +3,18 @@
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlencode
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ASYNC_SCHEME = "postgresql+asyncpg://"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", "iot/server/.env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # Neon pooled URL (host has -pooler). Used by the app.
     database_url: str
@@ -20,8 +24,10 @@ class Settings(BaseSettings):
     ee_project: str | None = None
     # Optional shared secret for IoT station ingest. If set, POST /ingest requires
     # an "Authorization: Bearer <token>" header that matches it.
-    station_token: str | None = None
-
+    station_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("STATION_TOKEN", "TANAW_STATION_TOKEN"),
+    )
     @field_validator("database_url", "database_url_direct")
     @classmethod
     def _to_asyncpg_url(cls, value: str | None) -> str | None:

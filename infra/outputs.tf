@@ -19,7 +19,7 @@ output "api_ecr_repository_url" {
 }
 
 output "iot_lambda_execution_role_arn" {
-  description = "Trust-only execution role ARN for the IoT Lambda."
+  description = "Execution role ARN for the IoT Lambda, including CloudWatch Logs permissions."
   value       = aws_iam_role.iot_lambda.arn
 }
 
