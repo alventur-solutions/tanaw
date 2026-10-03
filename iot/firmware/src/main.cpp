@@ -23,6 +23,10 @@ const int WATER_DRY = 0;
 const int WATER_WET = 3000;
 static_assert(WATER_DRY != WATER_WET, "Calibration values must differ");
 
+// Depth (cm) that corresponds to a 100% water reading. Used to convert the
+// 0-100% sensor reading into water_level_cm / flood_depth_cm for the API.
+const float WATER_FULL_SCALE_CM = 100.0f;
+
 const float WARNING_TEMP = 38.0;
 const float DANGER_TEMP = 40.0;
 
@@ -176,21 +180,35 @@ void uploadReading() {
     }
   }
 
-  // JSON matches what the Python receiver expects.
-  char body[256];
+  // Convert the 0-100% water reading to centimeters using the configured
+  // full-scale depth, then send the field that matches this station type:
+  //   river  -> water_level_cm
+  //   street -> flood_depth_cm
+  float water_cm = WATER_FULL_SCALE_CM * (waterPercent / 100.0f);
+  bool isRiver = (strcmp(STATION_TYPE, "river") == 0);
+
+  // JSON matches the TANAW API /ingest schema.
+  char body[320];
+  char tempField[24];
+  char humField[24];
   if (valid) {
+    snprintf(tempField, sizeof(tempField), "%.1f", temperature);
+    snprintf(humField, sizeof(humField), "%.1f", humidity);
+  } else {
+    snprintf(tempField, sizeof(tempField), "null");
+    snprintf(humField, sizeof(humField), "null");
+  }
+
+  if (isRiver) {
     snprintf(body, sizeof(body),
              "{\"station_id\":\"%s\",\"station_type\":\"%s\","
-             "\"temp_c\":%.1f,\"humidity_pct\":%.1f,"
-             "\"water_raw\":%d,\"water_percent\":%d,\"status\":\"%s\"}",
-             STATION_ID, STATION_TYPE, temperature, humidity,
-             waterRaw, waterPercent, status);
+             "\"temp_c\":%s,\"humidity_pct\":%s,\"water_level_cm\":%.1f}",
+             STATION_ID, STATION_TYPE, tempField, humField, water_cm);
   } else {
     snprintf(body, sizeof(body),
              "{\"station_id\":\"%s\",\"station_type\":\"%s\","
-             "\"temp_c\":null,\"humidity_pct\":null,"
-             "\"water_raw\":%d,\"water_percent\":%d,\"status\":\"%s\"}",
-             STATION_ID, STATION_TYPE, waterRaw, waterPercent, status);
+             "\"temp_c\":%s,\"humidity_pct\":%s,\"flood_depth_cm\":%.1f}",
+             STATION_ID, STATION_TYPE, tempField, humField, water_cm);
   }
 
   WiFiClientSecure client;

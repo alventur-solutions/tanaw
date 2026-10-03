@@ -36,7 +36,7 @@ import sqlite3
 import ssl
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -81,7 +81,7 @@ def store_reading(conn: sqlite3.Connection, payload: dict) -> None:
         (
             payload.get("station_id"),
             payload.get("station_type"),
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
             payload.get("temp_c"),
             payload.get("humidity_pct"),
             payload.get("water_raw"),
@@ -154,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
 
         store_reading(self.conn, payload)
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] stored reading "
+            f"[{datetime.now(UTC).isoformat()}] stored reading "
             f"from {payload.get('station_id')}: "
             f"temp={payload.get('temp_c')} water%={payload.get('water_percent')} "
             f"status={payload.get('status')}"
@@ -221,7 +221,7 @@ def _gen_cert_cryptography(cert_path: Path, key_path: Path) -> None:
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "tanaw-iot-dev")])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)

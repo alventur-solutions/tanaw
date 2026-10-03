@@ -16,6 +16,7 @@ funding/clean/
 .pio/
 node_modules/
 dashboard/dist/
+dashboard/tsconfig.tsbuildinfo
 .claude/settings.local.json
 .claude/worktrees/
 ghostwatch/
