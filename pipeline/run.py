@@ -9,12 +9,15 @@ One of the two is required, and a dry run always comes first.
 
 import argparse
 import asyncio
+import json
 
 from pipeline.registry import METRICS
 from pipeline.study_areas import init_ee, read_features
 
 ROW_KEYS = ("area_id", "year", "metric", "value", "quality_flag")
 YEARS_PER_REQUEST = 4
+# Geometries travel inside each request, and Earth Engine rejects a request over 10 MB.
+GEOMETRY_BYTES_PER_REQUEST = 1_500_000
 
 UPSERT = """
 INSERT INTO satellite_metrics (area_id, year, metric, value, quality_flag, source_version)
@@ -63,25 +66,43 @@ def to_rows(collection: dict) -> list[dict]:
     return sorted(rows, key=lambda r: (r["area_id"], r["year"]))
 
 
+def area_groups(features: list[dict], max_bytes: int = GEOMETRY_BYTES_PER_REQUEST) -> list[list]:
+    """Features in order, split so each group's geometry stays under max_bytes.
+
+    A feature larger than max_bytes gets a group of its own.
+    """
+    groups: list[list] = []
+    size = 0
+    for f in features:
+        f_bytes = len(json.dumps(f["geometry"]))
+        if not groups or size + f_bytes > max_bytes:
+            groups.append([])
+            size = 0
+        groups[-1].append(f)
+        size += f_bytes
+    return groups
+
+
 def compute_rows(metric_name: str, features: list[dict], years: list[int]) -> list[dict]:
     ee = init_ee()
     metric = METRICS[metric_name]
-    areas = ee.FeatureCollection(
-        [
-            ee.Feature(
-                ee.Geometry(f["geometry"], geodesic=False),
-                {"area_id": f["properties"]["area_id"]},
-            )
-            for f in features
-        ]
-    )
-    # One request per few years: a long range in a single request is rejected with
-    # "Too many concurrent aggregations".
     rows = []
-    for start in range(0, len(years), YEARS_PER_REQUEST):
-        batch = years[start : start + YEARS_PER_REQUEST]
-        result = ee.FeatureCollection([metric.compute(year, areas) for year in batch]).flatten()
-        rows += to_rows(result.getInfo())
+    for group in area_groups(features):
+        areas = ee.FeatureCollection(
+            [
+                ee.Feature(
+                    ee.Geometry(f["geometry"], geodesic=False),
+                    {"area_id": f["properties"]["area_id"]},
+                )
+                for f in group
+            ]
+        )
+        # One request per few years: a long range in a single request is rejected with
+        # "Too many concurrent aggregations".
+        for start in range(0, len(years), YEARS_PER_REQUEST):
+            batch = years[start : start + YEARS_PER_REQUEST]
+            result = ee.FeatureCollection([metric.compute(y, areas) for y in batch]).flatten()
+            rows += to_rows(result.getInfo())
     # The dataset the value came from, so rows from an older version can be told apart.
     rows = [{**row, "source_version": metric.dataset} for row in rows]
     return sorted(rows, key=lambda r: (r["area_id"], r["year"]))

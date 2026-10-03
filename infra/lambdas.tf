@@ -94,6 +94,11 @@ resource "aws_iam_role" "api_lambda" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
+resource "aws_iam_role_policy_attachment" "api_lambda_logs" {
+  role       = aws_iam_role.api_lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
 resource "aws_lambda_function" "api" {
   count = local.deploy_api_lambda ? 1 : 0
 
@@ -106,10 +111,20 @@ resource "aws_lambda_function" "api" {
   timeout       = var.api_timeout_seconds
   publish       = true
 
-  environment {
-    variables = {
-      TANAW_ENV = var.environment
+  depends_on = [aws_iam_role_policy_attachment.api_lambda_logs]
+
+  lifecycle {
+    precondition {
+      condition     = try(trimspace(var.api_database_url) != "", false)
+      error_message = "Set api_database_url before deploying the API Lambda."
     }
+  }
+
+  environment {
+    variables = merge(
+      { TANAW_ENV = var.environment },
+      var.api_database_url == null ? {} : { DATABASE_URL = var.api_database_url }
+    )
   }
 }
 

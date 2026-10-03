@@ -56,6 +56,14 @@ variable "api_lambda_image_uri" {
   nullable    = true
 }
 
+variable "api_database_url" {
+  description = "Neon pooled DATABASE_URL for the API Lambda. Required when deploying the API image."
+  type        = string
+  default     = null
+  nullable    = true
+  sensitive   = true
+}
+
 variable "api_cors_origins" {
   description = "Optional explicit browser origins for the API Function URL. Defaults to this stack's CloudFront domain."
   type        = list(string)

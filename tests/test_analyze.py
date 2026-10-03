@@ -317,7 +317,7 @@ def test_metric_without_a_module_is_422_and_lists_implemented(session, enqueued)
 
     assert response.status_code == 422
     assert "Metric(s) not available: rainfall." in response.text
-    assert "Implemented metrics: tree_cover_loss." in response.text
+    assert "Implemented metrics: tree_cover_loss, rainfall_total" in response.text
     assert session.jobs == []
     assert enqueued == []
 

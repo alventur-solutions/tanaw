@@ -1,6 +1,7 @@
 """Build, upload, and load TANAW study areas.
 
     python -m pipeline.study_areas build    # write pipeline/areas/<area_id>.geojson
+    python -m pipeline.study_areas build --area <area_id>   # one area, others untouched
     python -m pipeline.study_areas upload   # export each file to an Earth Engine table asset
     python -m pipeline.study_areas load     # upsert every feature into study_areas
 
@@ -25,12 +26,13 @@ ROOT = Path(__file__).resolve().parents[1]
 AREAS_DIR = ROOT / "pipeline" / "areas"
 CACHE_DIR = ROOT / ".cache"
 
-UTM_51N = 32651  # metric CRS for areas in Luzon
+UTM_51N = 32651  # metric CRS, covers 120 to 126 E (Luzon, Visayas, Mindanao)
 VERSION = 1
 
 # Zone rule for river basins: upstream is elevation > 100 m or slope > 18 percent.
 UP_ELEVATION_M = 100
 UP_SLOPE_PCT = 18
+ZONE_SCALE_M = 30  # pixel size of the upstream mask, unless the area sets `zone_scale_m`
 ZONE_MIN_PATCH_HA = 25  # patches and holes smaller than this are merged into their surroundings
 
 HYBAS_8 = "WWF/HydroSHEDS/v1/Basins/hybas_8"
@@ -62,6 +64,71 @@ AREAS = [
         "study_type": "urban",
         "adm3_name": "Quezon City",
         "adm3_bbox": (120.98, 14.58, 121.15, 14.78),
+    },
+    # River basins outside the demo set, all from the HydroSHEDS fallback.
+    # `hybas_main_bas` takes every level 8 unit that drains to that outlet.
+    # `zone_scale_m` is the pixel size of the upstream mask: coarser for a large basin,
+    # so the zone outline stays small enough to fetch.
+    {
+        "area_id": "pampanga-river-basin",
+        "name": "Pampanga River Basin",
+        "study_type": "river_basin",
+        "hybas_main_bas": 5080029400,
+        "zone_scale_m": 90,
+    },
+    {
+        # One HydroSHEDS unit inside the Pampanga basin. It overlaps pampanga-river-basin.
+        "area_id": "angat-river-basin",
+        "name": "Angat River Basin",
+        "study_type": "river_basin",
+        "hybas_ids": [5080116230],
+    },
+    {
+        "area_id": "cagayan-river-basin",
+        "name": "Cagayan River Basin",
+        "study_type": "river_basin",
+        "hybas_main_bas": 5080030230,
+        "zone_scale_m": 150,
+    },
+    {
+        "area_id": "bicol-river-basin",
+        "name": "Bicol River Basin",
+        "study_type": "river_basin",
+        "hybas_main_bas": 5080030780,
+        "zone_scale_m": 60,
+    },
+    {
+        "area_id": "agusan-river-basin",
+        "name": "Agusan River Basin",
+        "study_type": "river_basin",
+        "hybas_main_bas": 5080024400,
+        "zone_scale_m": 90,
+    },
+    {
+        # The HydroSHEDS unit is wider than the Iloilo River: it also holds the Jaro
+        # River and the coastal catchments next to it.
+        "area_id": "iloilo-river-basin",
+        "name": "Iloilo River Basin (with Jaro River and nearby coastal catchments)",
+        "study_type": "river_basin",
+        "hybas_ids": [5080028250],
+    },
+    {
+        "area_id": "jalaur-river-basin",
+        "name": "Jalaur River Basin",
+        "study_type": "river_basin",
+        "hybas_ids": [5080028240],
+    },
+    {
+        "area_id": "davao-river-basin",
+        "name": "Davao River Basin",
+        "study_type": "river_basin",
+        "hybas_ids": [5080025070],
+    },
+    {
+        "area_id": "cagayan-de-oro-river-basin",
+        "name": "Cagayan de Oro River Basin",
+        "study_type": "river_basin",
+        "hybas_ids": [5080024170],
     },
 ]
 
@@ -130,12 +197,16 @@ def drop_small_parts(geom: BaseGeometry, min_ha: float) -> BaseGeometry:
 # --- boundary sources ---------------------------------------------------------
 
 
-def basin_boundary(ee, hybas_ids: list[int]) -> BaseGeometry:
-    fc = ee.FeatureCollection(HYBAS_8).filter(ee.Filter.inList("HYBAS_ID", hybas_ids))
+def basin_boundary(ee, area: dict) -> BaseGeometry:
+    if "hybas_main_bas" in area:
+        chosen = ee.Filter.eq("MAIN_BAS", area["hybas_main_bas"])
+    else:
+        chosen = ee.Filter.inList("HYBAS_ID", area["hybas_ids"])
+    fc = ee.FeatureCollection(HYBAS_8).filter(chosen)
     return shape(fc.geometry().dissolve(1).getInfo())
 
 
-def upstream_mask(ee, basin: BaseGeometry) -> BaseGeometry:
+def upstream_mask(ee, basin: BaseGeometry, scale_m: int = ZONE_SCALE_M) -> BaseGeometry:
     """Vectorized SRTM mask of elevation > 100 m or slope > 18 percent inside the basin."""
     dem = ee.Image(SRTM)
     slope_pct = ee.Terrain.slope(dem).multiply(math.pi / 180).tan().multiply(100)
@@ -143,7 +214,7 @@ def upstream_mask(ee, basin: BaseGeometry) -> BaseGeometry:
     up = up.focalMode(radius=90, units="meters").selfMask()
     vectors = up.reduceToVectors(
         geometry=ee.Geometry(mapping(basin)),
-        scale=30,
+        scale=scale_m,
         geometryType="polygon",
         eightConnected=True,
         maxPixels=1e9,
@@ -192,9 +263,10 @@ def feature(area: dict, geom: BaseGeometry, zone: str | None = None) -> dict:
 
 def build_area(ee, area: dict) -> list[dict]:
     if area["study_type"] == "river_basin":
-        whole = clean(basin_boundary(ee, area["hybas_ids"]))
+        whole = clean(basin_boundary(ee, area))
         whole_utm = to_utm(whole)
-        mask = to_utm(shapely.make_valid(upstream_mask(ee, whole)))
+        scale_m = area.get("zone_scale_m", ZONE_SCALE_M)
+        mask = to_utm(shapely.make_valid(upstream_mask(ee, whole, scale_m)))
         up_utm = drop_small_parts(mask.intersection(whole_utm), ZONE_MIN_PATCH_HA)
         # Small downstream slivers and pockets go to the upstream zone.
         down_utm = drop_small_parts(whole_utm.difference(up_utm), ZONE_MIN_PATCH_HA)
@@ -206,10 +278,16 @@ def build_area(ee, area: dict) -> list[dict]:
     return [feature(area, city_boundary(area["adm3_name"], area["adm3_bbox"]))]
 
 
-def build() -> None:
+def build(only: list[str] | None = None) -> None:
+    """Build every area, or only the area_ids in `only`."""
+    unknown = set(only or []) - {a["area_id"] for a in AREAS}
+    if unknown:
+        raise SystemExit(f"Unknown area_id: {', '.join(sorted(unknown))}")
     ee = init_ee()
     AREAS_DIR.mkdir(parents=True, exist_ok=True)
     for area in AREAS:
+        if only and area["area_id"] not in only:
+            continue
         features = build_area(ee, area)
         path = AREAS_DIR / f"{area['area_id']}.geojson"
         path.write_text(
@@ -303,9 +381,13 @@ async def load() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=["build", "upload", "load"])
-    command = parser.parse_args().command
+    parser.add_argument(
+        "--area", action="append", help="build only this area_id. Repeat for more than one."
+    )
+    args = parser.parse_args()
+    command = args.command
     if command == "build":
-        build()
+        build(args.area)
     elif command == "upload":
         upload()
     else:

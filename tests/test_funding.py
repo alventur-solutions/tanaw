@@ -7,10 +7,10 @@ from api.main import app
 
 # quezon-city sits inside pasig-marikina-tullahan, so the 2022 project is linked to both.
 LINKED = [
-    {"area_id": "pasig-marikina-tullahan", "year": 2019, "projects": 1, "amount_php": 50.0},
+    {"area_id": "pasig-marikina-tullahan", "year": 2015, "projects": 1, "amount_php": 50.0},
     {"area_id": "pasig-marikina-tullahan", "year": 2022, "projects": 2, "amount_php": 300.0},
     {"area_id": "quezon-city", "year": 2022, "projects": 1, "amount_php": 100.0},
-    {"area_id": "quezon-city", "year": 2025, "projects": 1, "amount_php": 70.0},
+    {"area_id": "quezon-city", "year": 2026, "projects": 1, "amount_php": 70.0},
 ]
 
 
@@ -81,7 +81,7 @@ def test_totals_default_to_full_coverage_years(session):
     window = {"min_year": FIRST_FULL_YEAR, "max_year": LAST_FULL_YEAR}
     assert session.params == [{"area_id": None, **window}]
     assert data["include_partial_years"] is False
-    assert (data["min_year"], data["max_year"]) == (2021, 2024)
+    assert (data["min_year"], data["max_year"]) == (FIRST_FULL_YEAR, LAST_FULL_YEAR)
     assert data["partial_years"] is False
     assert data["caveat"] is None
     assert [r["year"] for r in data["rows"]] == [2022, 2022]
@@ -92,9 +92,9 @@ def test_include_partial_years_returns_caveat_flag(session):
 
     assert session.params == [{"area_id": None, "min_year": None, "max_year": None}]
     assert data["partial_years"] is True
-    assert "2021 to 2024" in data["caveat"]
+    assert f"{FIRST_FULL_YEAR} to {LAST_FULL_YEAR}" in data["caveat"]
     assert (data["min_year"], data["max_year"]) == (None, None)
-    assert [r["year"] for r in data["rows"]] == [2019, 2022, 2022, 2025]
+    assert [r["year"] for r in data["rows"]] == [2015, 2022, 2022, 2026]
 
 
 def test_totals_stay_per_area_and_are_not_added_across_areas(session):

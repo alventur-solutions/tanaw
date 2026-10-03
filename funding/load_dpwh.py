@@ -1,11 +1,14 @@
 """Bulk load the cleaned DPWH projects and their area links with asyncpg COPY.
 
-Usage: python -m funding.load_dpwh [funding/clean/dpwh_flood_control.parquet]
+Usage: python -m funding.load_dpwh [funding/clean/<file>.parquet] [--replace-source NAME]
 
 The links are read from the file next to it (dpwh_flood_control_areas.parquet).
 COPY goes into temporary staging tables. One INSERT ... ON CONFLICT builds the point
 geometry and upserts funding_projects on component_id, then the links of the staged
 projects are replaced in funding_project_areas. A refreshed file can be loaded again safely.
+
+--replace-source removes the rows of an older source in the same transaction. Use it when
+the loaded file holds the same contracts as that source, so no contract is counted twice.
 """
 
 import argparse
@@ -15,11 +18,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from funding.clean_dpwh import CLEAN_DIR, LINK_COLUMNS
+from funding.clean_dpwh import CLEAN_DIR, LINK_COLUMNS, has_point
 
 STAGING_COLUMNS = {
     "component_id": "text",
     "project_id": "text",
+    "contract_id": "text",
     "year": "integer",
     "category": "text",
     "type_of_work": "text",
@@ -30,6 +34,12 @@ STAGING_COLUMNS = {
     "province": "text",
     "start_date": "date",
     "completion_date": "date",
+    "description": "text",
+    "status": "text",
+    "progress_pct": "double precision",
+    "program": "text",
+    "source_of_funds": "text",
+    "quality_flag": "text",
     "source": "text",
     "lon": "double precision",
     "lat": "double precision",
@@ -69,6 +79,9 @@ DELETE_LINKS = """
     WHERE component_id IN (SELECT component_id FROM funding_projects_staging)
 """
 
+# The link rows go with them (ON DELETE CASCADE).
+DELETE_SOURCE = "DELETE FROM funding_projects WHERE source = $1"
+
 INSERT_LINKS = """
     INSERT INTO funding_project_areas (component_id, area_id)
     SELECT component_id, area_id FROM funding_project_areas_staging
@@ -82,10 +95,12 @@ def _money(value: float | None) -> Decimal | None:
 def to_records(df: pd.DataFrame) -> list[tuple]:
     """Rows in STAGING_COLUMNS order, with None for missing values."""
     # Flagged coordinates are kept as a row but get no point geometry.
-    has_point = df["quality_flag"] == "ok"
+    point = has_point(df)
+    # Files cleaned before a column existed load with that column empty.
+    df = df.reindex(columns=[*df.columns, *(c for c in STAGING_COLUMNS if c not in df.columns)])
     staged = df.assign(
-        lon=df["Longitude"].where(has_point),
-        lat=df["Latitude"].where(has_point),
+        lon=df["Longitude"].where(point),
+        lat=df["Latitude"].where(point),
         amount_php=df["amount_php"].map(_money),
         abc_php=df["abc_php"].map(_money),
     )[list(STAGING_COLUMNS)]
@@ -97,7 +112,9 @@ def to_link_records(links: pd.DataFrame) -> list[tuple]:
     return list(links[LINK_COLUMNS].itertuples(index=False, name=None))
 
 
-async def load(records: list[tuple], link_records: list[tuple]) -> tuple[int, int]:
+async def load(
+    records: list[tuple], link_records: list[tuple], replace_source: str | None = None
+) -> tuple[int, int]:
     """COPY and upsert in one transaction. Returns (funding_projects, link) row counts."""
     from api.db import engine
 
@@ -118,6 +135,8 @@ async def load(records: list[tuple], link_records: list[tuple]) -> tuple[int, in
                 unknown = [r["area_id"] for r in await pg.fetch(UNKNOWN_AREAS)]
                 if unknown:
                     raise ValueError(f"area_id not in study_areas, load them first: {unknown}")
+                if replace_source:
+                    await pg.execute(DELETE_SOURCE, replace_source)
                 await pg.execute(UPSERT)
                 await pg.execute(DELETE_LINKS)
                 await pg.execute(INSERT_LINKS)
@@ -134,11 +153,12 @@ def main() -> None:
     parser.add_argument(
         "parquet", type=Path, nargs="?", default=CLEAN_DIR / "dpwh_flood_control.parquet"
     )
+    parser.add_argument("--replace-source", help="source name whose rows are removed first")
     args = parser.parse_args()
     links_path = args.parquet.with_name(f"{args.parquet.stem}_areas.parquet")
     records = to_records(pd.read_parquet(args.parquet))
     link_records = to_link_records(pd.read_parquet(links_path))
-    projects, links = asyncio.run(load(records, link_records))
+    projects, links = asyncio.run(load(records, link_records, args.replace_source))
     print(f"copied {len(records)} rows, funding_projects now has {projects} rows")
     print(f"copied {len(link_records)} links, funding_project_areas now has {links} rows")
 

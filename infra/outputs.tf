@@ -24,7 +24,7 @@ output "iot_lambda_execution_role_arn" {
 }
 
 output "api_lambda_execution_role_arn" {
-  description = "Trust-only execution role ARN for the API Lambda."
+  description = "Execution role ARN for the API Lambda, including CloudWatch Logs permissions."
   value       = aws_iam_role.api_lambda.arn
 }
 

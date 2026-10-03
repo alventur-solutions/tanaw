@@ -5,7 +5,13 @@ from dataclasses import dataclass
 
 import ee
 
-from pipeline.metrics import tree_cover_loss
+from pipeline.metrics import (
+    heavy_rain_days,
+    rainfall_max_1day,
+    rainfall_total,
+    rainfall_wet_season,
+    tree_cover_loss,
+)
 
 
 @dataclass(frozen=True)
@@ -29,5 +35,16 @@ METRICS: dict[str, Metric] = {
             last_year=tree_cover_loss.LAST_YEAR,
             compute=tree_cover_loss.compute,
         ),
+        *[
+            Metric(
+                name=m.METRIC,
+                unit=m.UNIT,
+                dataset=m.DATASET,
+                first_year=m.FIRST_YEAR,
+                last_year=m.LAST_YEAR,
+                compute=m.compute,
+            )
+            for m in (rainfall_total, rainfall_wet_season, rainfall_max_1day, heavy_rain_days)
+        ],
     ]
 }

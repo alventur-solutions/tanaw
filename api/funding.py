@@ -17,9 +17,9 @@ router = APIRouter(prefix="/funding")
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 
-# DPWH coverage is mostly 2021 to 2024. Years outside hold only a few projects.
-FIRST_FULL_YEAR = 2021
-LAST_FULL_YEAR = 2024
+# The DPWH transparency dataset covers 2016 to 2025 in full. 2026 holds only a few contracts.
+FIRST_FULL_YEAR = 2016
+LAST_FULL_YEAR = 2025
 
 PARTIAL_YEARS_CAVEAT = (
     f"Years outside {FIRST_FULL_YEAR} to {LAST_FULL_YEAR} are included. The source covers "

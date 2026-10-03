@@ -1,13 +1,21 @@
-import { LngLatBounds, Map as MapLibre, NavigationControl } from 'maplibre-gl'
+import { LngLatBounds, Map as MapLibre, Marker, NavigationControl } from 'maplibre-gl'
 import type { GeoJSONSource } from 'maplibre-gl'
 import { useEffect, useRef, useState } from 'react'
 import { CATEGORIES, fetchGreenery } from './api'
-import type { AreaFeature, GreeneryLayer, ProjectFeature } from './api'
+import type { AreaFeature, GreeneryLayer, PointFeature } from './api'
+import { mark, report } from './perf'
+import SearchBox from './SearchBox'
+import type { Place } from './SearchBox'
 import WaybackCompare from './WaybackCompare'
 import type { WaybackRelease } from './WaybackCompare'
 
-const BASEMAP = 'https://tiles.openfreemap.org/styles/dark'
-const RIVER = '#2dd4bf'
+const BASEMAP = 'https://tiles.openfreemap.org/styles/positron'
+const RIVER = '#086aa5'
+const INK = '#1d1d1f'
+
+// The whole country: [west, south, east, north]. The overview and "All areas" fit this box.
+const COUNTRY: [number, number, number, number] = [116.9, 4.6, 126.7, 21.2]
+const COUNTRY_PADDING = 24
 
 // The camera is kept in the URL hash as #zoom/lat/lon/bearing/pitch, so a view can be shared
 // as a link. It is read once, when the page opens.
@@ -15,14 +23,18 @@ const SHARED_VIEW = location.hash.slice(1).split('/').map(Number)
 const HAS_SHARED_VIEW = SHARED_VIEW.length >= 3 && SHARED_VIEW.every(Number.isFinite)
 
 interface Props {
+  // Top-level areas, simplified for the overview.
   areas: AreaFeature[]
+  // Outline and zones of the selected area only, loaded when it is selected.
+  zones: AreaFeature[]
   selectedId: string | null
-  projects: ProjectFeature[]
+  // Every project site, inside a study area or not.
+  projects: PointFeature[]
   selectedProjectId: string | null
   releases: WaybackRelease[]
   compare: boolean
-  onCompare: (on: boolean) => void
-  onSelect: (areaId: string) => void
+  // alternatives: the other areas under the click, smallest first.
+  onSelect: (areaId: string, alternatives: string[]) => void
   onProject: (componentId: string) => void
 }
 
@@ -32,6 +44,14 @@ function collection(features: unknown[]) {
 
 function bounds(features: AreaFeature[]): LngLatBounds {
   const box = new LngLatBounds()
+  // The bbox from /areas is taken from the full geometry, so no vertex walk is needed.
+  if (features.length > 0 && features.every((f) => f.properties.bbox)) {
+    for (const f of features) {
+      const [west, south, east, north] = f.properties.bbox!
+      box.extend([west, south]).extend([east, north])
+    }
+    return box
+  }
   const walk = (coords: unknown): void => {
     if (Array.isArray(coords) && typeof coords[0] === 'number') {
       box.extend([coords[0] as number, coords[1] as number])
@@ -45,12 +65,12 @@ function bounds(features: AreaFeature[]): LngLatBounds {
 
 export default function MapView({
   areas,
+  zones,
   selectedId,
   projects,
   selectedProjectId,
   releases,
   compare,
-  onCompare,
   onSelect,
   onProject,
 }: Props) {
@@ -67,19 +87,37 @@ export default function MapView({
   const [showGreenery, setShowGreenery] = useState(true)
   const [greenery, setGreenery] = useState<GreeneryLayer | null>(null)
   const [greeneryError, setGreeneryError] = useState(false)
-  // Every basemap layer. Compare mode hides them so the imagery shows through. The dark
-  // basemap labels are not readable over imagery, so they are hidden too.
+  // Every basemap layer. Compare mode hides them so the imagery shows through.
   const basemapLayers = useRef<string[]>([])
+  const searchMarker = useRef<Marker | null>(null)
+
+  const goToPlace = (place: Place) => {
+    const instance = map.current
+    if (!instance) return
+    searchMarker.current?.remove()
+    searchMarker.current = new Marker({ color: INK }).setLngLat(place.center).addTo(instance)
+    if (place.extent) {
+      const [west, north, east, south] = place.extent
+      instance.fitBounds([west, south, east, north], { padding: 80, maxZoom: 16.5, duration: 900 })
+    } else {
+      instance.flyTo({ center: place.center, zoom: 16, duration: 900 })
+    }
+  }
 
   useEffect(() => {
     if (!container.current) return
     const instance = new MapLibre({
       container: container.current,
       style: BASEMAP,
-      center: HAS_SHARED_VIEW ? [SHARED_VIEW[2], SHARED_VIEW[1]] : [121.1, 14.65],
-      zoom: HAS_SHARED_VIEW ? SHARED_VIEW[0] : 9.6,
+      // Without a shared view the map opens on the whole country, flat.
+      ...(HAS_SHARED_VIEW
+        ? { center: [SHARED_VIEW[2], SHARED_VIEW[1]] as [number, number], zoom: SHARED_VIEW[0] }
+        : {
+            bounds: COUNTRY,
+            fitBoundsOptions: { padding: COUNTRY_PADDING },
+          }),
       bearing: HAS_SHARED_VIEW ? (SHARED_VIEW[3] ?? 0) : 0,
-      pitch: HAS_SHARED_VIEW ? (SHARED_VIEW[4] ?? 55) : 55,
+      pitch: HAS_SHARED_VIEW ? (SHARED_VIEW[4] ?? 55) : 0,
       maxPitch: 70,
       attributionControl: { compact: true },
     })
@@ -97,7 +135,7 @@ export default function MapView({
         'source-layer': 'building',
         minzoom: 13,
         paint: {
-          'fill-extrusion-color': '#4a5558',
+          'fill-extrusion-color': '#dcdce1',
           'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 6],
           'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
           'fill-extrusion-opacity': 0.9,
@@ -109,7 +147,7 @@ export default function MapView({
         source: 'areas',
         paint: {
           'fill-color': RIVER,
-          'fill-opacity': ['case', ['==', ['get', 'selected'], true], 0.1, 0.03],
+          'fill-opacity': ['case', ['==', ['get', 'selected'], true], 0.08, 0.03],
         },
       })
       instance.addLayer({
@@ -122,11 +160,19 @@ export default function MapView({
         },
       })
       instance.addLayer({
+        id: 'outline-fine',
+        type: 'line',
+        source: 'zones',
+        filter: ['==', ['get', 'role'], 'outline'],
+        paint: { 'line-color': RIVER, 'line-width': 2.5 },
+      })
+      instance.addLayer({
         id: 'zones-line',
         type: 'line',
         source: 'zones',
+        filter: ['==', ['get', 'role'], 'zone'],
         paint: {
-          'line-color': ['match', ['get', 'zone'], 'up', '#b8742f', '#0f9e90'],
+          'line-color': ['match', ['get', 'zone'], 'up', '#9a5b1e', '#00a39a'],
           'line-width': 1.5,
           'line-dasharray': [3, 2],
         },
@@ -136,14 +182,14 @@ export default function MapView({
         type: 'circle',
         source: 'projects',
         paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 3, 13, 6],
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 1.5, 9, 3, 13, 6],
           'circle-color': [
             'match',
             ['get', 'category'],
             ...CATEGORIES.flatMap((c) => [c.key, c.color]),
             '#888888',
           ] as unknown as string,
-          'circle-stroke-color': '#0b0e0f',
+          'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 1,
         },
       })
@@ -155,7 +201,7 @@ export default function MapView({
         paint: {
           'circle-radius': 11,
           'circle-color': 'rgba(0,0,0,0)',
-          'circle-stroke-color': RIVER,
+          'circle-stroke-color': INK,
           'circle-stroke-width': 2,
         },
       })
@@ -167,11 +213,16 @@ export default function MapView({
       })
       instance.on('click', 'areas-fill', (event) => {
         if (instance.queryRenderedFeatures(event.point, { layers: ['projects'] }).length) return
-        // Areas overlap. A click picks the smallest one under the pointer.
-        const hit = [...(event.features ?? [])].sort(
-          (a, b) => Number(a.properties.area_ha) - Number(b.properties.area_ha),
-        )[0]
-        if (hit) onSelectRef.current(String(hit.properties.area_id))
+        // Areas overlap. A click picks the smallest one under the pointer (ties by area_id)
+        // and hands the rest to the panel, in the same order.
+        const seen = new Map<string, number>()
+        for (const f of event.features ?? []) {
+          seen.set(String(f.properties.area_id), Number(f.properties.area_ha))
+        }
+        const ordered = [...seen.entries()].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+        if (ordered.length > 0) {
+          onSelectRef.current(ordered[0][0], ordered.slice(1).map(([id]) => id))
+        }
       })
       for (const layer of ['projects', 'areas-fill']) {
         instance.on('mouseenter', layer, () => (instance.getCanvas().style.cursor = 'pointer'))
@@ -182,7 +233,11 @@ export default function MapView({
         const view = [instance.getZoom().toFixed(2), lat.toFixed(5), lng.toFixed(5), instance.getBearing().toFixed(0), instance.getPitch().toFixed(0)]
         history.replaceState(null, '', `${location.pathname}${location.search}#${view.join('/')}`)
       })
+      mark('map-load')
       setReady(true)
+      instance.once('idle', () => {
+        mark('first-idle')
+      })
     })
     map.current = instance
     return () => instance.remove()
@@ -192,9 +247,6 @@ export default function MapView({
     const instance = map.current
     if (!ready || !instance || areas.length === 0) return
     const top = areas.filter((a) => a.properties.zone === null)
-    const zones = areas.filter(
-      (a) => a.properties.zone !== null && a.properties.area_id.startsWith(`${selectedId}__`),
-    )
     const source = (id: string) => instance.getSource(id) as GeoJSONSource
     source('areas').setData(
       collection(
@@ -204,17 +256,47 @@ export default function MapView({
         })),
       ),
     )
-    source('zones').setData(collection(zones))
+    mark('areas-set')
     const focus = top.filter((a) => selectedId === null || a.properties.area_id === selectedId)
     if (sharedViewArea.current === selectedId) return
+    // A link that opens on a project keeps the camera on its site.
+    if (selectedProjectId !== null) return
     sharedViewArea.current = undefined
-    instance.fitBounds(bounds(focus), { padding: 48, duration: 700, pitch: instance.getPitch() })
+    if (selectedId === null) {
+      instance.fitBounds(COUNTRY, { padding: COUNTRY_PADDING, duration: 700, pitch: 0, bearing: 0 })
+    } else if (focus.length > 0) {
+      instance.fitBounds(bounds(focus), { padding: 48, duration: 700, pitch: tilted ? 55 : 0 })
+    }
+    // The fit follows the area, not the project selection or the 3D toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, areas, selectedId])
 
   useEffect(() => {
     const instance = map.current
     if (!ready || !instance) return
+    // Zone outlines exist only for the selected area.
+    const own = zones.filter((z) => selectedId !== null && z.properties.area_id.startsWith(selectedId))
+    ;(instance.getSource('zones') as GeoJSONSource).setData(
+      collection(
+        own.map((z) => ({
+          ...z,
+          properties: { ...z.properties, role: z.properties.zone === null ? 'outline' : 'zone' },
+        })),
+      ),
+    )
+  }, [ready, zones, selectedId])
+
+  useEffect(() => {
+    const instance = map.current
+    if (!ready || !instance) return
     ;(instance.getSource('projects') as GeoJSONSource).setData(collection(projects))
+    if (projects.length > 0) {
+      mark('points-set')
+      instance.once('idle', () => {
+        mark('points-idle')
+        report()
+      })
+    }
   }, [ready, projects])
 
   useEffect(() => {
@@ -229,9 +311,9 @@ export default function MapView({
         duration: 900,
       })
     }
-    // Flying happens when the selection changes, not when the project list reloads.
+    // Flying happens when the selection changes, or when a linked project first loads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, selectedProjectId])
+  }, [ready, selectedProjectId, projects.length > 0])
 
   useEffect(() => {
     if (!showGreenery || greenery || greeneryError) return
@@ -250,7 +332,7 @@ export default function MapView({
       })
       // Under the buildings and labels, over the land.
       instance.addLayer(
-        { id: 'greenery', type: 'raster', source: 'greenery', paint: { 'raster-opacity': 0.8, 'raster-resampling': 'nearest' } },
+        { id: 'greenery', type: 'raster', source: 'greenery', paint: { 'raster-opacity': 0.55, 'raster-resampling': 'nearest' } },
         'building',
       )
     }
@@ -283,6 +365,7 @@ export default function MapView({
         <WaybackCompare main={map.current} releases={releases} />
       )}
       <div ref={container} className="map" aria-label="Map of study areas and project sites" />
+      <SearchBox onPick={goToPlace} />
       <div className="map-toggles">
         <button aria-pressed={tilted} onClick={() => setTilted(!tilted)}>
           3D buildings
@@ -293,13 +376,6 @@ export default function MapView({
           onClick={() => setShowGreenery(!showGreenery)}
         >
           Greenery
-        </button>
-        <button
-          aria-pressed={compare}
-          disabled={releases.length < 2}
-          onClick={() => onCompare(!compare)}
-        >
-          Compare imagery
         </button>
       </div>
       <div className="map-legend">

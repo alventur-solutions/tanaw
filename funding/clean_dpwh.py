@@ -21,6 +21,8 @@ SOURCE = "dpwh_flood_control"
 # Philippines bounding box. Rows outside are flagged, never dropped.
 LON_RANGE = (116.0, 127.0)
 LAT_RANGE = (4.0, 21.0)
+# quality_flag values of a row that has no usable point.
+COORD_FLAGS = ("coords_outside_ph", "coords_missing")
 
 # Checked in order, first match wins.
 CATEGORY_KEYWORDS = [
@@ -51,6 +53,11 @@ def classify(type_of_work: str | None, description: str | None = None) -> str:
         if any(keyword in text for keyword in keywords):
             return category
     return "other"
+
+
+def has_point(df: pd.DataFrame) -> pd.Series:
+    """True where the row has a usable point. Other flags describe the row, not the site."""
+    return ~df["quality_flag"].isin(COORD_FLAGS)
 
 
 def _money(strings: pd.Series, numbers: pd.Series) -> pd.Series:
@@ -90,6 +97,7 @@ def clean(raw: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     out["component_id"] = text["ProjectComponentID"]
     out["project_id"] = text["ProjectID"]
+    out["contract_id"] = text["ContractID"]
     out["year"] = pd.to_numeric(text["InfraYear"], errors="coerce").astype("Int64")
     out["funding_year"] = pd.to_numeric(text["FundingYear"], errors="coerce").astype("Int64")
     out["completion_year"] = pd.to_numeric(text["CompletionYear"], errors="coerce").astype("Int64")
@@ -142,7 +150,7 @@ def assign_areas(df: pd.DataFrame, areas: gpd.GeoDataFrame | None) -> pd.DataFra
     """
     if areas is None or areas.empty:
         return pd.DataFrame(columns=LINK_COLUMNS)
-    usable = df[df["quality_flag"] == "ok"]
+    usable = df[has_point(df)]
     points = gpd.GeoDataFrame(
         usable[["component_id"]],
         geometry=gpd.points_from_xy(usable["Longitude"], usable["Latitude"]),
@@ -165,30 +173,35 @@ def totals_per_area(df: pd.DataFrame, links: pd.DataFrame) -> pd.DataFrame:
 
 
 def write_outputs(
-    df: pd.DataFrame, links: pd.DataFrame, clean_dir: Path = CLEAN_DIR
+    df: pd.DataFrame,
+    links: pd.DataFrame,
+    clean_dir: Path = CLEAN_DIR,
+    stem: str = "dpwh_flood_control",
 ) -> dict[str, Path]:
     clean_dir.mkdir(parents=True, exist_ok=True)
     paths = {
-        "parquet": clean_dir / "dpwh_flood_control.parquet",
-        "csv": clean_dir / "dpwh_flood_control.csv",
-        "areas_parquet": clean_dir / "dpwh_flood_control_areas.parquet",
-        "areas_csv": clean_dir / "dpwh_flood_control_areas.csv",
-        "ee_csv": clean_dir / "dpwh_flood_control_ee.csv",
+        "parquet": clean_dir / f"{stem}.parquet",
+        "csv": clean_dir / f"{stem}.csv",
+        "areas_parquet": clean_dir / f"{stem}_areas.parquet",
+        "areas_csv": clean_dir / f"{stem}_areas.csv",
+        "ee_csv": clean_dir / f"{stem}_ee.csv",
     }
     df.to_parquet(paths["parquet"], index=False)
     df.to_csv(paths["csv"], index=False)
     links.to_parquet(paths["areas_parquet"], index=False)
     links.to_csv(paths["areas_csv"], index=False)
     # Earth Engine table upload needs a point, so rows with flagged coordinates stay out.
-    df.loc[df["quality_flag"] == "ok", EE_COLUMNS].to_csv(paths["ee_csv"], index=False)
+    df.loc[has_point(df), EE_COLUMNS].to_csv(paths["ee_csv"], index=False)
     return paths
 
 
-def print_summary(rows_in: int, df: pd.DataFrame, links: pd.DataFrame) -> None:
+def print_summary(
+    rows_in: int, df: pd.DataFrame, links: pd.DataFrame, dropped: str = "duplicates removed"
+) -> None:
     print(f"rows in: {rows_in}")
-    print(f"duplicates removed (ProjectComponentID): {rows_in - len(df)}")
+    print(f"{dropped}: {rows_in - len(df)}")
     print(f"rows out: {len(df)}")
-    print(f"flagged coordinates: {int((df['quality_flag'] != 'ok').sum())}")
+    print(f"flagged coordinates: {int((~has_point(df)).sum())}")
     print("\nrows per category:")
     print(df["category"].value_counts().to_string())
     print("\nrows per year (InfraYear):")

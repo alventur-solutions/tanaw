@@ -32,7 +32,7 @@ The primary dashboard user is a nontechnical planner who wants key insights quic
 
 The primary client opens directly to a full-screen map. Its main task is to show study-area boundaries and the locations of recorded public works. Search finds a place or project. Selecting either opens a compact record card and lets the user compare two dates in satellite imagery with a draggable before/after divider.
 
-Use the TANAW API for study-area GeoJSON, project points and tree-cover metrics. The current API routes are `/areas`, `/areas/{area_id}/projects`, and `/areas/{area_id}/metrics?metric=tree_cover_loss`. Area project queries default to the fully covered DPWH years 2021–2024.
+Use the TANAW API for study-area GeoJSON, project points and metric rows. The dashboard uses `/areas`, `/areas/{area_id}/zones`, `/areas/{area_id}/projects`, `/areas/{area_id}/metrics`, `/projects/points`, `/projects/{component_id}`, and `/layers/greenery`. Area project queries default to the DPWH coverage window documented by the source loader.
 
 Use Esri World Imagery Wayback for historical imagery tiles and available archive dates. Display dates as archive publication dates; they are not necessarily image capture dates. Keep project coordinates visibly distinct from area boundaries and avoid implying that a project site is its area of benefit.
 
@@ -97,7 +97,7 @@ The first useful comparisons are tree cover loss and flood exposure across basin
 
 ### Public works and funding
 
-Start with DPWH flood-control records. The project context says the current dataset mostly covers 2021 to 2024, so funding comparisons must use 2021 onward and state the exact overlapping period. Later sources may include DBM/GAA, PhilGEPS, COA reports, LGU DRRM budgets, and DENR National Greening Program records.
+Start with the DPWH Infrastructure Transparency dataset, currently documented for 2016 to 2025. State the exact period that overlaps with each environmental measure. Later sources may include DBM/GAA, PhilGEPS, COA reports, LGU DRRM budgets, and DENR National Greening Program records.
 
 For each project, show source, year, location, agency, category, and status only when the source supports those fields. Preserve the distinction between **ABC**, **contract cost**, and **actual expenditure**. Do not label an amount as money spent unless the source records expenditure.
 
@@ -123,11 +123,11 @@ Use station-specific water fields: `water_level_cm` for river stations and `floo
 
 ## Frontend And Integration Direction
 
-The frontend is a **static Next.js export** served from private S3 through CloudFront. The browser calls the API Function URL for study areas, project locations, and metric rows. Historical imagery tiles load from Esri Wayback. Configure CORS for the local and deployed client origins.
+The deployed dashboard is a **static React/Vite build** from `dashboard/`, served from private S3 through CloudFront. Production builds use `VITE_API_BASE_URL` to call the API Function URL directly. Local Vite development uses an `/api` proxy to FastAPI. Historical imagery tiles load from Esri Wayback. Configure API Function URL CORS for the deployed dashboard origin.
 
 The repository's dashboard-agent notes propose an API surface: area list and metrics, funding by area, station list and readings, and asynchronous analysis with job polling. These endpoints are a proposal, not a verified running API contract. Coordinate the frontend's data types with the backend before treating them as stable.
 
-The Terraform currently creates S3/CloudFront, ECR, and optional Lambda functions with direct HTTPS Function URLs. It does not provision AWS IoT Core or a database. The project brief also describes MQTT and a cloud database as possible telemetry architecture. Keep the frontend independent of the transport and settle the ingest and persistence design before wiring production data.
+The Terraform creates S3/CloudFront, ECR, and optional Lambda functions with direct HTTPS Function URLs. The API Lambda serves dashboard data and analysis routes. Station `POST /ingest` belongs to the separate IoT receiver Lambda in `iot/server/receiver.py`. Terraform does not provision AWS IoT Core or a database. Keep the dashboard independent of the station transport.
 
 The existing data dictionary describes an analog water sensor and temperature-based LED alerts, while the project brief and firmware-agent notes describe ultrasonic water measurement and water-depth alerts. Confirm the hardware and alert model before finalizing station fields, alert names, or thresholds in the UI.
 
@@ -137,7 +137,7 @@ The existing data dictionary describes an analog water sensor and temperature-ba
 
 - Build the area explorer and study-area workspace around data that exists and has a source.
 - Show the current demo areas first. Add candidate areas after boundaries, joins, and data availability are checked.
-- Support land history, DPWH funding from 2021 onward, neutral insights, and the station view when each has usable data.
+- Support land history, DPWH funding from 2016 onward, neutral insights, and the station view when each has usable data.
 - Include loading, empty, stale, partial-coverage, and error states. Mark any fixture data as demo data.
 - Provide a useful view when a metric is unavailable. Do not fill gaps with invented values or interpolated annual observations.
 - Support a shareable area and time-range URL. Treat PDF/CSV export as a follow-up unless it is needed for the first demo.
