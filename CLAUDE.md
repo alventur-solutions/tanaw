@@ -23,7 +23,7 @@ Demo set: Pasig-Marikina-Tullahan (basin), Rodriguez/Antipolo uplands (rural), Q
 - `pipeline/metrics/` one Earth Engine (Python `ee`) module per metric
 - `pipeline/areas/` study area GeoJSON files
 - `pipeline/gee_app/` Earth Engine App (JavaScript) prototype
-- `funding/raw/` untouched source files (not in git, sources listed in `funding/SOURCES.md`), `funding/clean/` cleaned output
+- `funding/raw/` untouched source files (not in git, sources listed in `funding/SOURCES.md`), `funding/clean/` cleaned output (not in git, rebuilt with `python -m funding.clean_dpwh`)
 - `db/migrations/` PostgreSQL + PostGIS (Alembic, config in `alembic.ini`)
 - `api/` FastAPI (on demand analysis with cache, job polling)
 - `firmware/` ESP32 station (PlatformIO, Arduino)
@@ -51,7 +51,7 @@ Demo set: Pasig-Marikina-Tullahan (basin), Rodriguez/Antipolo uplands (rural), Q
 - Study areas overlap, so a project links to every area it falls in (`funding_project_areas`). Compute every funding total per `area_id` through that table. Never add totals across areas.
 - Deduplicate on ProjectComponentID (ProjectID has duplicates).
 - Coordinates are the project site, not the area it protects.
-- Classify TypeofWork into: drainage, river_structure, slope_protection, pumping, other.
+- Classify TypeofWork into: drainage, river_structure, slope_protection, pumping, other. A pumping station in ProjectDescription sets the category to pumping and overrides TypeofWork (DPWH files pumping stations under general types). A pump on its own does not count.
 
 ## IoT stations
 Same hardware for all: ESP32, DHT22, JSN-SR04T waterproof ultrasonic, SSD1306 OLED, buzzer.

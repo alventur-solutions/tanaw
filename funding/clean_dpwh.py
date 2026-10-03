@@ -30,21 +30,26 @@ CATEGORY_KEYWORDS = [
     ("pumping", ("pumping",)),
 ]
 
-# "pumping station", "pumping stations", "pump station".
-PUMPING_STATION = re.compile(r"\bpump(ing)?\s+stations?\b", re.IGNORECASE)
+# "pumping station", "pumping stations", "pump station", and the misspelling "staiton" that
+# is in the source. A pump on its own ("Booster Pump Accessories") does not match.
+PUMPING_STATION = re.compile(r"\bpump(ing)?\s+sta(ti|it)ons?\b", re.IGNORECASE)
 
 EE_COLUMNS = ["component_id", "year", "category", "amount_php", "Longitude", "Latitude"]
 LINK_COLUMNS = ["component_id", "area_id"]
 
 
 def classify(type_of_work: str | None, description: str | None = None) -> str:
-    """Category from TypeofWork. ProjectDescription is used only when TypeofWork has no match."""
+    """Category from TypeofWork, except that a pumping station in ProjectDescription wins.
+
+    DPWH files pumping stations under general types such as "Flood Mitigation Facility",
+    so TypeofWork alone never yields the pumping category.
+    """
+    if PUMPING_STATION.search(description or ""):
+        return "pumping"
     text = (type_of_work or "").lower()
     for category, keywords in CATEGORY_KEYWORDS:
         if any(keyword in text for keyword in keywords):
             return category
-    if PUMPING_STATION.search(description or ""):
-        return "pumping"
     return "other"
 
 

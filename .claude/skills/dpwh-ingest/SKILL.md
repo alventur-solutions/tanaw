@@ -16,7 +16,7 @@ Input: `funding/raw/flood-control-projects-*.csv` (not in git, see `funding/SOUR
    - slope_protection: "Slope Protection"
    - pumping: "Pumping"
    - other: anything else
-   - When TypeofWork matches none of these and ProjectDescription mentions a pumping station, the category is pumping.
+   - When ProjectDescription mentions a pumping station ("pumping station", "pump station", any case), the category is pumping, whatever TypeofWork says. A pump on its own ("Booster Pump Accessories") does not count.
 6. Validate coordinates inside the Philippines (lon 116 to 127, lat 4 to 21). Flag outliers, do not drop them.
 7. Point-in-polygon join to `pipeline/areas/*.geojson`. Study areas overlap, so keep every matching area as a (component_id, area_id) link, never only one area per project.
 8. Write `funding/clean/dpwh_flood_control.parquet` and `.csv`, and the links to `dpwh_flood_control_areas.parquet` and `.csv`. Load both with `python -m funding.load_dpwh` (tables `funding_projects` and `funding_project_areas`).

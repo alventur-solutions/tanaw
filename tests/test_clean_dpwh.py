@@ -61,27 +61,26 @@ def test_classify(type_of_work, category):
 @pytest.mark.parametrize(
     ("type_of_work", "description", "category"),
     [
-        # TypeofWork has no match, so the description decides.
-        (
-            "Construction of Retarding Basin",
-            "Retarding Basin and Pumping Station, Manila",
-            "pumping",
-        ),
+        # A pumping station in the description overrides the TypeofWork match.
+        ("Construction of Flood Mitigation Facility", "Pumping Station at Estero", "pumping"),
+        ("Construction of Drainage Structure", "Drainage with PUMPING STATION", "pumping"),
+        ("Construction of Revetment", "Revetment and pumping  stations, Phase II", "pumping"),
         ("Construction of Waterway", "Rehabilitation of Pump Station along Estero", "pumping"),
+        ("Construction of Flood Mitigation Facility", "Upgrading of Pumping Staiton", "pumping"),
         (None, "Construction of Pumping Stations, Phase II", "pumping"),
         # A pump is not a pumping station.
         ("Construction of Retarding Basin", "Installation of Booster Pump Accessories", "other"),
-        ("Construction of Retarding Basin", None, "other"),
-        # TypeofWork matches a category, so the description is not used.
         (
-            "Construction of Flood Mitigation Facility",
-            "Pumping Station at Estero",
-            "river_structure",
+            "Construction of Drainage Structure",
+            "Drainage with Submersible Pump at Sta. 1",
+            "drainage",
         ),
-        ("Construction of Drainage Structure", "Drainage with Pumping Station", "drainage"),
+        # No pumping station in the description: TypeofWork decides.
+        ("Construction of Flood Mitigation Facility", "Floodgate at Estero", "river_structure"),
+        ("Construction of Retarding Basin", None, "other"),
     ],
 )
-def test_classify_uses_description_only_when_type_of_work_has_no_match(
+def test_classify_pumping_station_in_description_overrides_type_of_work(
     type_of_work, description, category
 ):
     assert classify(type_of_work, description) == category
