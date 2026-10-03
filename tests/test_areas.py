@@ -41,6 +41,8 @@ PROJECTS = [
         "type_of_work": "Construction of Drainage Structure",
         "amount_php": 100.0,
         "municipality": "Quezon City",
+        "contractor": "Sample Builders",
+        "completion_date": "2023-01-15",
         "lon": 121.05,
         "lat": 14.65,
     }

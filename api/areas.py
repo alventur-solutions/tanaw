@@ -36,9 +36,13 @@ SELECT_METRICS = text(
 )
 # :min_year and :max_year are NULL when partial years are included.
 SELECT_PROJECTS = text(
-    "SELECT p.component_id, p.year, p.category, p.type_of_work, "
+    "SELECT p.component_id, p.project_id, p.year, p.category, p.type_of_work, "
     "CAST(p.amount_php AS double precision) AS amount_php, "
-    "p.municipality, ST_X(p.geom) AS lon, ST_Y(p.geom) AS lat "
+    "CAST(p.abc_php AS double precision) AS abc_php, "
+    "p.contractor, p.municipality, p.province, "
+    "CAST(p.start_date AS text) AS start_date, "
+    "CAST(p.completion_date AS text) AS completion_date, "
+    "ST_X(p.geom) AS lon, ST_Y(p.geom) AS lat "
     "FROM funding_project_areas l "
     "JOIN funding_projects p USING (component_id) "
     "WHERE l.area_id = :area_id "
