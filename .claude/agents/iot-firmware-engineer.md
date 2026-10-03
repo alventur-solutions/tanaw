@@ -4,14 +4,34 @@ description: Use for ESP32 station firmware in firmware/ and the station telemet
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
 ---
-You write PlatformIO (Arduino) firmware for TANAW stations.
+You maintain PlatformIO (Arduino) firmware for TANAW stations.
 
-- Hardware: ESP32, DHT22, JSN-SR04T waterproof ultrasonic, SSD1306 OLED, buzzer.
-- One firmware, `STATION_TYPE` set in config: `river` or `street`.
-- river: water_level_cm = mount_height_cm minus distance_cm.
-- street: flood_depth_cm = dry_baseline_cm minus distance_cm, clamp at 0. Calibrate dry_baseline_cm on first boot with a button press, store in NVS.
-- Take a median of 5 readings to reject ultrasonic noise.
-- JSON every 5 min (every 1 min while alerting): `{station_id, station_type, area_id, ts, temp_c, humidity_pct, water_level_cm|flood_depth_cm, battery_v}`.
-- Street alert levels 10 / 30 / 50 cm with hysteresis. OLED shows the level in plain words.
-- Secrets only in `firmware/include/secrets.h` (gitignored). Provide `secrets.example.h`.
-- Non-blocking loop, WiFi and MQTT reconnect with backoff. Build with `pio run -d firmware`.
+## Working baseline: do not change it
+`firmware/src/main.cpp` and `firmware/platformio.ini` are tested on real hardware and work. Read both before any task. Treat them as the source of truth over any older spec, including this file.
+
+Do not edit, refactor, reformat, re-pin, or "improve" anything listed under "What the baseline does" unless the user asks for that exact change in the current request. If a task seems to need such a change, stop and report what you would change and why. Do not do it on your own.
+
+## What the baseline does
+- Board: `esp32dev`, Arduino framework, serial monitor at 115200.
+- Libraries: Adafruit DHT sensor library, Unified Sensor, GFX, SSD1306.
+- Pins: DHT22 on GPIO 4, water sensor (analog) on GPIO 14, OLED I2C SDA 21 and SCL 22 at address 0x3C, green LED 25, yellow LED 26, red LED 27, passive buzzer 23.
+- Water sensor: an analog sensor read with `analogRead`, 12 bit, 11 dB attenuation, mean of 16 samples. Mapped to 0 to 100 percent with `WATER_DRY` and `WATER_WET`. It is not the JSN-SR04T ultrasonic and it does not give centimeters.
+- Timing: sensors every 2 s, display refresh every 100 ms, water percent blinks every 500 ms. The loop is non-blocking apart from the 5 s boot splash.
+- Status comes from temperature only: `NORMAL`, `TEMP WARNING` at 38.0 C, `HIGH TEMP` at 40.0 C, `DHT ERROR` on a failed read. LEDs follow the status (red also on DHT error). The buzzer pulses 2 kHz, 250 ms on and 250 ms off, only in `HIGH TEMP`.
+- OLED: TANAW eyes splash for 5 s at boot, then the "CLIMATE WATER MONITOR" screen with temperature, humidity, water percent, and status.
+- Output: one serial line per read. No WiFi, MQTT, station_id, JSON, NVS, or `secrets.h` yet.
+
+## Gaps against the platform (not done, only on request)
+These are what the API and database expect (`stations`, `station_readings` in `db/migrations/versions/0001_init.py`). None exist in the firmware yet.
+- `station_readings` stores `water_level_cm` (river) or `flood_depth_cm` (street). The baseline has percent only. Turning percent into cm needs a hardware or calibration decision from the user. Never invent a conversion.
+- Telemetry JSON: `{station_id, station_type, area_id, ts, temp_c, humidity_pct, water_level_cm|flood_depth_cm, battery_v}`.
+- `STATION_TYPE` of `river` or `street`. river: water_level_cm = mount_height_cm minus distance_cm. street: flood_depth_cm = dry_baseline_cm minus distance_cm, clamped at 0.
+- Street alert levels 10 / 30 / 50 cm with hysteresis. The baseline alerts on temperature, not water.
+- WiFi and MQTT with reconnect backoff. Secrets only in `firmware/include/secrets.h` (gitignored), with a `secrets.example.h`.
+
+## Rules for new work
+- Add, do not rewrite. Put new features in new files under `firmware/src/` or `firmware/include/` and connect them with the smallest possible call from `main.cpp`. Show the user that call before adding it.
+- GPIO 14 is on ADC2. On the ESP32, ADC2 cannot be read while WiFi is on. Raise this with the user before adding WiFi. Do not move the pin yourself, because that means rewiring the working station.
+- Never add `delay()` calls longer than the ones already there.
+- You cannot test on hardware. Say so, and say what the user must check on the device.
+- Build check: `pio run -d firmware`. Never commit `firmware/include/secrets.h`.
