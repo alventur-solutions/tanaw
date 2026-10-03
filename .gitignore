@@ -11,3 +11,9 @@ __pycache__/
 node_modules/
 dashboard/dist/
 .claude/settings.local.json
+
+# IoT secrets and local artifacts
+iot/firmware/src/config.h
+iot/server/*.crt
+iot/server/*.key
+iot/server/*.db
