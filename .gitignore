@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+secrets/
+*service-account*.json
+firmware/include/secrets.h
+__pycache__/
+.venv/
+*.pyc
+.pio/
+node_modules/
+dashboard/dist/
+.claude/settings.local.json
