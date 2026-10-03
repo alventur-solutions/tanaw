@@ -25,3 +25,6 @@ iot/firmware/src/config.h
 iot/server/*.crt
 iot/server/*.key
 iot/server/*.db
+
+# Large raw downloads
+data/raw/

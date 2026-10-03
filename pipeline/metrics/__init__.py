@@ -8,11 +8,20 @@ METRIC_NAMES: tuple[str, ...] = (
     "built_up_area",
     "green_space",
     "ndvi",
-    "rainfall",
+    "rainfall_total",
+    "rainfall_wet_season",
+    "rainfall_max_1day",
+    "heavy_rain_days",
     "flood_extent",
     "night_lights",
 )
 
 # The metrics that have a module and an entry in pipeline.registry. POST /analyze accepts
 # only these. A test keeps this tuple in step with the registry.
-IMPLEMENTED_METRICS: tuple[str, ...] = ("tree_cover_loss",)
+IMPLEMENTED_METRICS: tuple[str, ...] = (
+    "tree_cover_loss",
+    "rainfall_total",
+    "rainfall_wet_season",
+    "rainfall_max_1day",
+    "heavy_rain_days",
+)
