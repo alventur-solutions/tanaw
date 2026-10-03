@@ -27,11 +27,17 @@ export interface MetricRow {
 
 export interface ProjectProps {
   component_id: string
+  project_id: string | null
   year: number
   category: Category
   type_of_work: string | null
   amount_php: number | null
+  abc_php: number | null
+  contractor: string | null
   municipality: string | null
+  province: string | null
+  start_date: string | null
+  completion_date: string | null
 }
 
 export interface ProjectFeature {
@@ -72,12 +78,25 @@ export async function fetchAreaData(areaId: string): Promise<AreaData> {
   return { loss: metrics.rows, projects }
 }
 
+export interface GreeneryLayer {
+  year: number
+  window: string
+  source: string
+  tile_url: string
+  legend: { name: string; color: string }[]
+  caveat: string
+}
+
+export function fetchGreenery(): Promise<GreeneryLayer> {
+  return get<GreeneryLayer>('/layers/greenery')
+}
+
 export const CATEGORIES: { key: Category; label: string; color: string }[] = [
-  { key: 'drainage', label: 'Drainage', color: '#2a78d6' },
-  { key: 'river_structure', label: 'River structure', color: '#eb6834' },
-  { key: 'slope_protection', label: 'Slope protection', color: '#1baf7a' },
-  { key: 'pumping', label: 'Pumping station', color: '#eda100' },
-  { key: 'other', label: 'Other', color: '#e87ba4' },
+  { key: 'drainage', label: 'Drainage', color: '#3987e5' },
+  { key: 'river_structure', label: 'River structure', color: '#d95926' },
+  { key: 'slope_protection', label: 'Slope protection', color: '#199e70' },
+  { key: 'pumping', label: 'Pumping station', color: '#c98500' },
+  { key: 'other', label: 'Other', color: '#d55181' },
 ]
 
 export const STUDY_TYPE_LABEL: Record<StudyType, string> = {

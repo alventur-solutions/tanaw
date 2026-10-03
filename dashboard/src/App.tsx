@@ -13,15 +13,17 @@ import type { AreaData, AreaFeature, StudyType } from './api'
 import { CategoryBars, FundingYearChart, TreeLossChart } from './charts'
 import type { LossSeries } from './charts'
 import MapView from './MapView'
+import ProjectCard from './ProjectCard'
+import type { WaybackRelease } from './WaybackCompare'
 
 // The three study areas sit on one river system, from the mountain to the city street.
 const RIVER_ORDER: StudyType[] = ['rural_upland', 'river_basin', 'urban']
 const TABS = ['Land history', 'Funding', 'Side by side', 'Live sensors'] as const
 type Tab = (typeof TABS)[number]
 
-const UP_COLOR = '#9a5b1e'
-const DOWN_COLOR = '#00a39a'
-const LOSS_COLOR = '#9a5b1e'
+const UP_COLOR = '#b8742f'
+const DOWN_COLOR = '#0f9e90'
+const LOSS_COLOR = '#b8742f'
 
 function shortName(area: AreaFeature): string {
   return area.properties.name.split(' (')[0]
@@ -39,11 +41,23 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(query.get('area'))
   const [tab, setTab] = useState<Tab>(TABS.find((t) => t === query.get('tab')) ?? 'Land history')
   const [data, setData] = useState<Record<string, AreaData>>({})
+  const [projectId, setProjectId] = useState<string | null>(query.get('project'))
+  const [releases, setReleases] = useState<WaybackRelease[]>([])
+  const [compare, setCompare] = useState(query.get('compare') === '1')
+
+  const selectArea = (areaId: string | null) => {
+    setProjectId(null)
+    setSelectedId(areaId)
+  }
 
   useEffect(() => {
     fetchAreas().then(setAreas, () =>
       setError('The TANAW API is not answering. Start it with: uvicorn api.main:app'),
     )
+    fetch('/data/wayback.json')
+      .then((response) => response.json())
+      .then((body: { releases: WaybackRelease[] }) => setReleases(body.releases))
+      .catch(() => setReleases([]))
   }, [])
 
   const topAreas = useMemo(
@@ -81,32 +95,31 @@ export default function App() {
   const up = selectedId ? data[`${selectedId}__up`] : undefined
   const down = selectedId ? data[`${selectedId}__down`] : undefined
   const hasZones = zoneIds.length === 2
+  const project = current?.projects.features.find((f) => f.properties.component_id === projectId)
 
   return (
     <div className="app">
       <header className="masthead">
         <div className="brand">
-          <h1>TANAW</h1>
-          <p>Land change and flood control spending, side by side</p>
-        </div>
-        <nav className="river" aria-label="Study areas, from mountain to city">
-          <svg viewBox="0 0 600 60" preserveAspectRatio="none" aria-hidden="true">
-            <path d="M0,60 L0,22 L28,6 L52,20 L80,4 L112,24 L150,30 C230,40 250,46 330,48 C420,50 480,52 600,52 L600,60 Z" />
+          <svg width="30" height="16" viewBox="0 0 30 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.5" />
+            <circle cx="22" cy="8" r="6.5" />
+            <circle cx="8" cy="8" r="2.4" className="pupil" />
+            <circle cx="22" cy="8" r="2.4" className="pupil" />
           </svg>
-          <button
-            className={selectedId === null ? 'stop all active' : 'stop all'}
-            onClick={() => setSelectedId(null)}
-          >
+          <h1>TANAW</h1>
+        </div>
+        <nav className="nav" aria-label="Study areas, from mountain to city">
+          <button className={selectedId === null ? 'active' : ''} onClick={() => selectArea(null)}>
             All areas
           </button>
           {topAreas.map((area) => (
             <button
               key={area.properties.area_id}
-              className={area.properties.area_id === selectedId ? 'stop active' : 'stop'}
-              onClick={() => setSelectedId(area.properties.area_id)}
+              className={area.properties.area_id === selectedId ? 'active' : ''}
+              onClick={() => selectArea(area.properties.area_id)}
             >
-              <span className="stop-type">{STUDY_TYPE_LABEL[area.properties.study_type]}</span>
-              <span className="stop-name">{shortName(area)}</span>
+              {STUDY_TYPE_LABEL[area.properties.study_type]}
             </button>
           ))}
         </nav>
@@ -117,7 +130,12 @@ export default function App() {
           areas={areas}
           selectedId={selectedId}
           projects={current?.projects.features ?? []}
-          onSelect={setSelectedId}
+          selectedProjectId={projectId}
+          releases={releases}
+          compare={compare}
+          onCompare={setCompare}
+          onSelect={selectArea}
+          onProject={setProjectId}
         />
 
         <aside className="panel">
@@ -127,12 +145,13 @@ export default function App() {
               <h2>One river system, three places to look</h2>
               <p>
                 Pick a study area above or on the map. Each one shows what satellites recorded on
-                the land and where DPWH flood control projects were built.
+                the land and where DPWH flood control projects are sited. Turn on Compare imagery
+                on the map to see older and newer satellite imagery side by side.
               </p>
               <ul className="area-list">
                 {topAreas.map((area) => (
                   <li key={area.properties.area_id}>
-                    <button onClick={() => setSelectedId(area.properties.area_id)}>
+                    <button onClick={() => selectArea(area.properties.area_id)}>
                       <strong>{shortName(area)}</strong>
                       <span>
                         {STUDY_TYPE_LABEL[area.properties.study_type]},{' '}
@@ -149,7 +168,16 @@ export default function App() {
             </div>
           )}
 
-          {selected && (
+          {selected && project && (
+            <ProjectCard
+              project={project}
+              compare={compare}
+              onCompare={setCompare}
+              onClose={() => setProjectId(null)}
+            />
+          )}
+
+          {selected && !project && (
             <>
               <div className="panel-head">
                 <h2>{shortName(selected)}</h2>
@@ -157,6 +185,12 @@ export default function App() {
                   {STUDY_TYPE_LABEL[selected.properties.study_type]},{' '}
                   {formatHa(selected.properties.area_ha)}
                 </p>
+                {current && current.projects.features.length > 0 && (
+                  <p className="hint">
+                    Turn on Compare imagery on the map to see older and newer satellite imagery.
+                    Select a project point to go to its site.
+                  </p>
+                )}
               </div>
               <div className="tabs" role="tablist">
                 {TABS.map((name) => (
