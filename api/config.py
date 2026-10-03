@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     database_url_direct: str | None = None
     # Earth Engine project. The pipeline reads it from the environment first.
     ee_project: str | None = None
+    # Optional shared secret for IoT station ingest. If set, POST /ingest requires
+    # an "Authorization: Bearer <token>" header that matches it.
+    station_token: str | None = None
 
     @field_validator("database_url", "database_url_direct")
     @classmethod
