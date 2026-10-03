@@ -12,6 +12,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 funding/raw/
+funding/clean/
 .pio/
 node_modules/
 dashboard/dist/
