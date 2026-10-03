@@ -6,7 +6,8 @@
       "Bash(python -m pipeline.run:*)",
       "Bash(pio run:*)",
       "Bash(git status)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "Read(./.env.example)"
     ],
     "deny": [
       "Read(./.env)",
