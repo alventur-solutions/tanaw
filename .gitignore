@@ -7,6 +7,11 @@ firmware/include/secrets.h
 __pycache__/
 .venv/
 *.pyc
+*.egg-info/
+.cache/
+.pytest_cache/
+.ruff_cache/
+funding/raw/
 .pio/
 node_modules/
 dashboard/dist/
