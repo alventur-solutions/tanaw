@@ -8,6 +8,8 @@ Function URLs. It does not build or upload application artifacts.
 
 - Private S3 bucket with versioning and server-side encryption for frontend files.
 - CloudFront distribution with Origin Access Control; the bucket stays private.
+- Next.js frontend deployed as static files. Configure `output: "export"` and
+  run `pnpm build` from `client/` to produce `client/out/`.
 - ECR repository for the API Lambda container image.
 - Optional IoT Lambda using a Python zip package and `main.handler`.
 - Optional API Lambda using a pushed Lambda-compatible container image.
@@ -20,6 +22,11 @@ call them directly over HTTPS. Anyone who obtains either URL can invoke it, so
 the handlers must validate IoT device credentials and API access themselves.
 The API URL only allows browser CORS requests from the CloudFront domain by
 default. CORS does not restrict non-browser clients.
+
+The Next.js site is static at runtime. It can load baked, read-only data from its
+own static JSON assets and call the API Function URL from the browser for live
+sensor readings and on-demand analysis. Keep dynamic API handling in the API
+Lambda; static export does not run a Next.js server.
 
 ## Prerequisites
 
@@ -51,18 +58,19 @@ are set. Push the API image to the `api_ecr_repository_url` output, build the
 IoT zip, then set `api_lambda_image_uri` and `iot_lambda_zip_path` in
 `dev.tfvars` and apply again.
 
-Upload the frontend build output to the bucket from `frontend_bucket_name`,
-then open `frontend_url`:
+Build the Next.js static export, upload `client/out/` to the bucket from
+`frontend_bucket_name`, then open `frontend_url`:
 
 ```sh
-aws s3 sync ../dashboard/dist "s3://$(terraform output -raw frontend_bucket_name)/" --delete
+pnpm --dir ../client build
+aws s3 sync ../client/out "s3://$(terraform output -raw frontend_bucket_name)/" --delete
 aws cloudfront create-invalidation \
   --distribution-id "$(terraform output -raw frontend_distribution_id)" \
   --paths '/*'
 ```
 
-The dashboard directory is not in this repository yet, so the upload step
-applies after the frontend is built.
+The client lives in `../client/`. Its browser API connection remains unset until
+the API route and response schema are agreed.
 
 ## State and cleanup
 
