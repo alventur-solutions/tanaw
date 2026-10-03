@@ -19,3 +19,9 @@ dashboard/dist/
 .claude/settings.local.json
 .claude/worktrees/
 ghostwatch/
+
+# IoT secrets and local artifacts
+iot/firmware/src/config.h
+iot/server/*.crt
+iot/server/*.key
+iot/server/*.db

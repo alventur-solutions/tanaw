@@ -1,0 +1,11 @@
+aws_region   = "ap-southeast-1"
+project_name = "tanaw"
+environment  = "dev"
+
+# Leave these null for the initial infrastructure setup. Set them after the
+# IoT Lambda zip and API container image have been built and published.
+iot_lambda_zip_path  = null
+api_lambda_image_uri = null
+
+# Empty uses this stack's CloudFront hostname for API CORS.
+api_cors_origins = []
