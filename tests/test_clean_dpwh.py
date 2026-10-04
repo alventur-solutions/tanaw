@@ -6,7 +6,13 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
-from funding.clean_dpwh import assign_areas, classify, clean, totals_per_area
+from funding.clean_dpwh import (
+    assign_areas,
+    classify,
+    classify_from_description,
+    clean,
+    totals_per_area,
+)
 from funding.load_dpwh import STAGING_COLUMNS, to_link_records, to_records
 
 
@@ -225,3 +231,44 @@ def test_to_link_records_are_component_and_area_pairs():
     records = to_link_records(assign_areas(_three_sites(), _overlapping_areas()))
     assert records[0] == ("P001-CW1", "basin")
     assert len(records) == 4
+
+
+@pytest.mark.parametrize(
+    ("description", "category"),
+    [
+        ("Construction of Riverbank Protection, Brgy. X", "river_structure"),
+        ("Improvement of Marikina River, Phase II", "river_structure"),
+        ("Construction of Seawall at Brgy. Y", "river_structure"),
+        ("Rehabilitation of Sapang Baho Creek", "river_structure"),
+        ("Construction of Bank Protection along Highway", "river_structure"),
+        ("Construction of Retarding Basin, Phase I", "river_structure"),
+        ("Construction of Box Culvert, Brgy. Z", "drainage"),
+        ("Construction of Canal Lining, Brgy. Z", "drainage"),
+        ("Construction of Slope Protection, Sta. 1+000", "slope_protection"),
+        ("Rock fall and landslide control", "slope_protection"),
+        # The work named first decides when a description names two.
+        ("Construction of Drainage and Slope Protection", "drainage"),
+        ("Construction of Slope Protection and Drainage", "slope_protection"),
+        ("Box Culvert along Balanti Creek", "drainage"),
+        ("River Slope Protection at Brgy. Q", "river_structure"),
+        # A pumping station wins over any other work.
+        ("Riverwall with Pumping Station, Phase II", "pumping"),
+        # A pump alone does not count.
+        ("Installation of Booster Pump at Estero de Vitas", "other"),
+        # Program text names no work. Text that is only a heading stays other.
+        ("Organizational Outcome 2: Protect Lives and Properties against Major Floods", "other"),
+        (
+            "MFO 2 Flood Management Services - Flood Mitigation Structures and Drainage Systems",
+            "other",
+        ),
+        (
+            "Flood Mitigation Structures and Drainage Systems - Construction of River Control",
+            "river_structure",
+        ),
+        ("Bridge widening, Brgy. Z", "other"),
+        (None, "other"),
+        ("", "other"),
+    ],
+)
+def test_classify_from_description(description, category):
+    assert classify_from_description(description) == category

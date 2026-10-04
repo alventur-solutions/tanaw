@@ -82,7 +82,7 @@ export interface AreaData {
   projects: Projects
 }
 
-async function get<T>(path: string): Promise<T> {
+export async function get<T>(path: string): Promise<T> {
   const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, '')
   const apiBase = configuredBase || '/api'
   const response = await fetch(`${apiBase}${path}`)
@@ -111,6 +111,43 @@ export async function fetchAreaData(areaId: string): Promise<AreaData> {
     rain: metrics.rows.filter((row) => RAIN_METRICS.includes(row.metric)),
     projects,
   }
+}
+
+/** One top-level area in GET /areas/summary. A null measure is not loaded, never zero. */
+export interface AreaSummary {
+  area_id: string
+  name: string
+  study_type: StudyType
+  area_ha: number
+  loss_window_ha: number | null
+  loss_record_ha: number | null
+  loss_from: number | null
+  loss_to: number | null
+  rain_mean_mm: number | null
+  rain_years: number | null
+  rain_from: number | null
+  rain_to: number | null
+  contracts: number | null
+  contract_cost_php: number | null
+  review_terminated: number | null
+  review_ongoing_earlier: number | null
+  review_not_started_earlier: number | null
+  review_ongoing_full_progress: number | null
+  review_any: number | null
+  metrics_loaded: boolean
+  projects_linked: boolean
+}
+
+export interface Summary {
+  min_year: number
+  max_year: number
+  current_year: number
+  note: string
+  rows: AreaSummary[]
+}
+
+export function fetchSummary(): Promise<Summary> {
+  return get<Summary>('/areas/summary')
 }
 
 export async function fetchPoints(): Promise<PointFeature[]> {
@@ -146,6 +183,11 @@ export const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'pumping', label: 'Pumping station', color: '#eda100' },
   { key: 'other', label: 'Other', color: '#e87ba4' },
 ]
+
+// A zone keeps one color on every chart, on screen and on paper.
+export const UP_COLOR = '#9a5b1e'
+export const DOWN_COLOR = '#00a39a'
+export const LOSS_COLOR = '#9a5b1e'
 
 export const RAIN_METRICS = [
   'rainfall_total',
@@ -205,6 +247,12 @@ export function sumAmount(features: ProjectFeature[]): number | null {
   const amounts = features.map((feature) => feature.properties.amount_php)
   if (amounts.some((amount) => amount === null)) return null
   return amounts.reduce<number>((total, amount) => total + amount!, 0)
+}
+
+/** Combine totals only when every total is available. */
+export function sumTotals(values: (number | null)[]): number | null {
+  if (values.some((value) => value === null)) return null
+  return values.reduce<number>((total, value) => total + value!, 0)
 }
 
 // Display only. The island group of each study area, for lists and the intro. It is not stored

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  DOWN_COLOR,
+  LOSS_COLOR,
   STUDY_TYPE_LABEL,
+  UP_COLOR,
   fetchAreaData,
   fetchPoints,
   fetchProject,
   fetchAreas,
+  fetchSummary,
   fetchZones,
   formatHa,
   formatPhp,
@@ -14,36 +18,53 @@ import {
   sumAmount,
   shortName,
   sumLoss,
+  sumTotals,
 } from './api'
-import type { AreaData, AreaFeature, MetricRow, PointFeature, ProjectFeature } from './api'
-import { CategoryBars, FundingYearChart, RainChart, StatusList, TreeLossChart } from './charts'
+import type { AreaData, AreaFeature, MetricRow, PointFeature, ProjectFeature, Summary } from './api'
+import {
+  CategoryBars,
+  FundingYearChart,
+  HeavyRainChart,
+  RainChart,
+  StatusList,
+  TreeLossChart,
+} from './charts'
 import type { LossSeries } from './charts'
+import AllAreas from './AllAreas'
+import AreaBrief from './AreaBrief'
 import AreaNav from './AreaNav'
+import ForReview from './ForReview'
+import { AREA_KEYS, readChoice, writeParams } from './urlState'
 import MapView from './MapView'
 import { mark } from './perf'
 import ProjectCard from './ProjectCard'
 import {
   categoryLede,
+  URBAN_NOTE,
   estimatedCategories,
   fundingLede,
-  listOr,
+  heavyGroupsNote,
+  heavyRainLede,
   lossLede,
-  missingCategories,
+  officeLede,
+  officeNote,
+  officeRows,
+  placeLede,
+  placeRows,
   rainLede,
+  share,
   sideLede,
   sideLine,
   statusLede,
   zoneFinding,
   zoneLossLede,
+  zoneSpendLede,
+  unnamedPlaceLine,
 } from './story'
 import type { WaybackRelease } from './WaybackCompare'
 
-const TABS = ['Land history', 'Funding', 'Side by side', 'Live sensors'] as const
+const TABS = ['Land history', 'Funding', 'Side by side', 'For review'] as const
 type Tab = (typeof TABS)[number]
-
-const UP_COLOR = '#9a5b1e'
-const DOWN_COLOR = '#00a39a'
-const LOSS_COLOR = '#9a5b1e'
 
 export default function App() {
   const [areas, setAreas] = useState<AreaFeature[]>([])
@@ -63,8 +84,13 @@ export default function App() {
   // Other areas under the last map click, smallest first. The panel offers them.
   const [alternatives, setAlternatives] = useState<string[]>([])
   const [filter, setFilter] = useState('')
+  // The all-areas comparison under the intro. Null until GET /areas/summary answers.
+  const [summary, setSummary] = useState<Summary | null>(null)
+  const [summaryFailed, setSummaryFailed] = useState(false)
 
   const selectArea = (areaId: string | null, others: string[] = []) => {
+    // Keys that belong to the old area are dropped before the new area renders.
+    writeParams(Object.fromEntries(AREA_KEYS.map((key) => [key, null])))
     setProjectId(null)
     setSelectedId(areaId)
     setAlternatives(others)
@@ -79,6 +105,7 @@ export default function App() {
       () => setError('The TANAW API is not answering. Start it with: uvicorn api.main:app'),
     )
     fetchPoints().then(setPoints, () => setError('Could not load the project sites.'))
+    fetchSummary().then(setSummary, () => setSummaryFailed(true))
     fetch('/data/wayback.json')
       .then((response) => response.json())
       .then((body: { releases: WaybackRelease[] }) => setReleases(body.releases))
@@ -157,6 +184,15 @@ export default function App() {
   }
   // A bridge opens the next tab from its top, so the story reads in order.
   const panelRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    writeParams({
+      area: selectedId,
+      tab: selectedId === null || tab === TABS[0] ? null : tab,
+      project: projectId,
+      compare: compare ? '1' : null,
+    })
+  }, [selectedId, tab, projectId, compare])
+
   const openTab = (name: Tab) => {
     setTab(name)
     panelRef.current?.scrollTo({ top: 0 })
@@ -175,8 +211,12 @@ export default function App() {
     .map((id) => topAreas.find((a) => a.properties.area_id === id))
     .filter((a): a is AreaFeature => a !== undefined && a !== selected)
 
+  // The printed brief exists once the area's own data has loaded. Print CSS then shows it alone.
+  const briefReady = selected !== null && current !== undefined
+  const printBrief = () => window.print()
+
   return (
-    <div className="app">
+    <div className={briefReady ? 'app has-brief' : 'app'}>
       <header className="masthead">
         <div className="brand">
           <img src="/assets/tanaw-mark.png" alt="" />
@@ -188,6 +228,10 @@ export default function App() {
           onSelect={(id) => selectArea(id)}
           onPreview={loadArea}
         />
+        <div className="masthead-actions">
+        <a className="nav-link" href="/live-sensors">
+          Live sensors
+        </a>
         <button
           className="pill"
           aria-pressed={compare}
@@ -196,6 +240,7 @@ export default function App() {
         >
           {compare ? 'Close imagery' : 'Compare imagery'}
         </button>
+        </div>
       </header>
 
       <main className="workspace">
@@ -278,6 +323,12 @@ export default function App() {
                 TANAW shows patterns for review. It does not show cause and it does not judge any
                 project. Study areas overlap, so figures for one area must not be added to another.
               </p>
+              <AllAreas
+                summary={summary}
+                failed={summaryFailed}
+                onSelect={(id) => selectArea(id)}
+                onPreview={loadArea}
+              />
             </div>
           )}
 
@@ -317,6 +368,9 @@ export default function App() {
                   )}
                   {current && !linked && <li>DPWH projects not linked yet</li>}
                 </ul>
+                <button className="back print-brief" disabled={!briefReady} onClick={printBrief}>
+                  Print area brief
+                </button>
                 {others.length > 0 && (
                   <div className="overlap">
                     <p>
@@ -364,16 +418,36 @@ export default function App() {
                 <LandHistory selected={selected} current={current} up={up} down={down} hasZones={hasZones} linked={linked} onTab={openTab} />
               )}
               {current && tab === 'Funding' && (
-                <Funding current={current} linked={linked} onTab={openTab} />
+                <Funding current={current} up={up} down={down} hasZones={hasZones} linked={linked} onTab={openTab} />
               )}
               {current && tab === 'Side by side' && (
                 <SideBySide selected={selected} current={current} up={up} down={down} hasZones={hasZones} linked={linked} onTab={openTab} />
               )}
-              {tab === 'Live sensors' && <LiveSensors />}
+              {current && tab === 'For review' && (
+                <ForReview
+                  selected={selected}
+                  current={current}
+                  linked={linked}
+                  onProject={setProjectId}
+                  onPrint={printBrief}
+                />
+              )}
             </>
           )}
         </aside>
       </main>
+      {selected && current && (
+        <div className="brief-print" aria-hidden="true">
+          <AreaBrief
+            selected={selected}
+            current={current}
+            up={up}
+            down={down}
+            hasZones={hasZones}
+            linked={linked}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -402,10 +476,7 @@ function Bridge({ to, onTab, children }: { to: Tab; onTab: (tab: Tab) => void; c
 /** Shown wherever a city's panel leads with tree cover loss. */
 function UrbanNote() {
   return (
-    <p className="context-note">
-      Built-up surface and green space are not computed for this area yet. They are the land
-      measures for a city. Tree cover loss is shown as supporting evidence only.
-    </p>
+    <p className="context-note">{URBAN_NOTE}</p>
   )
 }
 
@@ -447,6 +518,75 @@ function RainBeat({ rain }: { rain: MetricRow[] }) {
   )
 }
 
+const hasHeavy = (rows?: MetricRow[]) => (rows ?? []).some((r) => r.metric === 'heavy_rain_days')
+
+const ZONE_CHOICES = [
+  { key: 'all', label: 'Whole area', place: 'here' },
+  { key: 'up', label: 'Upstream', place: 'in the upstream zone' },
+  { key: 'down', label: 'Downstream', place: 'in the downstream zone' },
+] as const
+
+function HeavyRainBeat({ rain, up, down }: { rain: MetricRow[]; up?: MetricRow[]; down?: MetricRow[] }) {
+  const [zone, setZoneState] = useState(() => readChoice('rainzone', ['all', 'up', 'down'] as const, 'all'))
+  const setZone = (next: 'all' | 'up' | 'down') => {
+    setZoneState(next)
+    writeParams({ rainzone: next === 'all' ? null : next })
+  }
+  // The toggle shows only when both zones have heavy rain rows. A zone still loading is not offered.
+  const zoned = hasHeavy(up) && hasHeavy(down)
+  const choice = ZONE_CHOICES.find((c) => c.key === (zoned ? zone : 'all')) ?? ZONE_CHOICES[0]
+  const rows = choice.key === 'up' ? (up ?? []) : choice.key === 'down' ? (down ?? []) : rain
+  const groups = heavyGroupsNote(rows)
+  return (
+    <section className="beat">
+      <h3>How often did heavy rain fall here?</h3>
+      {!hasHeavy(rain) ? (
+        <p className="empty">
+          Heavy rain day counts for this area are not loaded yet. No values are shown, so none of
+          it should be read as zero days.
+        </p>
+      ) : (
+        <>
+          <p className="lede">{heavyRainLede(rows, choice.place)}</p>
+          {zoned && (
+            <div className="picker" role="group" aria-label="Part of the basin shown">
+              {ZONE_CHOICES.map((c) => (
+                <button key={c.key} aria-pressed={c.key === choice.key} onClick={() => setZone(c.key)}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="chart-label">
+            Days with an area mean of 50 mm or more{choice.key === 'all' ? '' : `, ${choice.label.toLowerCase()} zone`}
+          </p>
+          <HeavyRainChart
+            key={choice.key}
+            rows={rows}
+            color={choice.key === 'up' ? UP_COLOR : choice.key === 'down' ? DOWN_COLOR : undefined}
+          />
+          <ul className="caveats">
+            <li>
+              A heavy rain day here is a day when the CHIRPS area mean reached 50 mm. A local
+              downpour can pass that mark on a day when the area mean does not.
+            </li>
+            <li>
+              CHIRPS daily values tend to read low on extreme days, so these counts are lower than
+              rain gauge counts.
+            </li>
+            <li>
+              A larger area spreads rain over more ground, so its area mean reaches 50 mm on fewer
+              days. Counts are not comparable between areas or zones of very different size.
+            </li>
+            {groups && <li>{groups}</li>}
+            <li>A year that is not complete is left out of the groups.</li>
+          </ul>
+        </>
+      )}
+    </section>
+  )
+}
+
 function LandHistory({ selected, current, up, down, hasZones, onTab }: PanelProps) {
   const urban = selected.properties.study_type === 'urban'
   const bridge = (
@@ -466,6 +606,7 @@ function LandHistory({ selected, current, up, down, hasZones, onTab }: PanelProp
           </p>
         </section>
         <RainBeat rain={current.rain} />
+        <HeavyRainBeat key={selected.properties.area_id} rain={current.rain} up={up?.rain} down={down?.rain} />
         {bridge}
       </>
     )
@@ -549,12 +690,20 @@ function LandHistory({ selected, current, up, down, hasZones, onTab }: PanelProp
       )}
 
       <RainBeat rain={current.rain} />
+      <HeavyRainBeat key={selected.properties.area_id} rain={current.rain} up={up?.rain} down={down?.rain} />
       {bridge}
     </>
   )
 }
 
-function Funding({ current, linked, onTab }: Pick<PanelProps, 'current' | 'linked' | 'onTab'>) {
+function Funding({
+  current,
+  up,
+  down,
+  hasZones,
+  linked,
+  onTab,
+}: Pick<PanelProps, 'current' | 'up' | 'down' | 'hasZones' | 'linked' | 'onTab'>) {
   const { features, min_year, max_year } = current.projects
   const years = Array.from({ length: max_year - min_year + 1 }, (_, i) => min_year + i)
   const bridge = (
@@ -584,6 +733,16 @@ function Funding({ current, linked, onTab }: Pick<PanelProps, 'current' | 'linke
     )
   }
   const estimates = estimatedCategories(features)
+  const offices = officeRows(features)
+  const officeRest = officeNote(features)
+  const places = placeRows(features)
+  const unnamed = unnamedPlaceLine(places)
+  // Zone contracts are shown once both zones have arrived with at least one contract between them.
+  const zoneSpend =
+    hasZones && up !== undefined && down !== undefined &&
+    up.projects.features.length + down.projects.features.length > 0
+      ? { up: up.projects.features, down: down.projects.features }
+      : null
   return (
     <>
       <section className="beat">
@@ -596,7 +755,7 @@ function Funding({ current, linked, onTab }: Pick<PanelProps, 'current' | 'linke
             left out.
           </li>
           <li>
-            Contract cost is the contract budget listed by DPWH. It is not the amount paid.
+            Contract cost is the contract budget listed by DPWH. This data does not show what was paid.
           </li>
           <li>
             The year is the DPWH infrastructure year, which can differ from the year the work was
@@ -625,6 +784,102 @@ function Funding({ current, linked, onTab }: Pick<PanelProps, 'current' | 'linke
       </section>
 
       <section className="beat">
+        <h3>Which DPWH offices hold the contracts here?</h3>
+        <p className="lede">{officeLede(features)}</p>
+        {offices.top.length > 0 && (
+          <>
+            <p className="chart-label">Contract cost by DPWH office or region, as listed</p>
+            <PlaceBars rows={[...offices.top, ...(offices.rest ? [offices.rest] : [])]} />
+            <GroupTable
+              name="DPWH office or region, as listed"
+              rows={[
+                ...offices.top,
+                ...(offices.rest ? [offices.rest] : []),
+                ...(offices.unlisted ? [offices.unlisted] : []),
+              ]}
+            />
+          </>
+        )}
+        <ul className="caveats">
+          <li>The office is the one listed in the DPWH record. Being listed is not a finding about the office.</li>
+          {officeRest && <li>{officeRest}</li>}
+          <li>
+            In the DPWH data this field is named province. It holds the office, not a province.
+          </li>
+          <li>The coordinates are the project site, not the area the project protects.</li>
+          <li>Contract cost is the contract budget listed by DPWH. This data does not show what was paid.</li>
+          {offices.rest && (
+            <li>
+              Offices after the first {offices.top.length} by contract cost are grouped as one bar.
+            </li>
+          )}
+        </ul>
+      </section>
+
+      <section className="beat">
+        <h3>Where in the area were the contracts sited?</h3>
+        <p className="lede">{placeLede(features)}</p>
+        {places.named > 0 && (
+          <>
+            <PlaceBars rows={[...places.top, ...(places.rest ? [places.rest] : [])]} />
+            <GroupTable
+              name="Municipality, as listed"
+              rows={[...places.top, ...(places.rest ? [places.rest] : []), ...(places.unnamed ? [places.unnamed] : [])]}
+            />
+          </>
+        )}
+        {unnamed && <p className="chart-note">{unnamed}</p>}
+        <ul className="caveats">
+          <li>The municipality is as listed by DPWH.</li>
+          <li>The coordinates are the project site, not the area the project protects.</li>
+          <li>
+            The province field in the DPWH data holds the DPWH office, so places are not grouped by
+            province. The beat above groups contracts by that office.
+          </li>
+          {places.rest && (
+            <li>Places after the first {places.top.length} by contract cost are grouped as one bar.</li>
+          )}
+        </ul>
+      </section>
+
+      {hasZones && zoneSpend === null && (
+        <section className="beat">
+          <p className="empty">{ZONES_NOT_LOADED}</p>
+        </section>
+      )}
+      {zoneSpend && (
+        <section className="beat">
+          <h3>How much was sited upstream, and how much downstream?</h3>
+          <p className="lede">{zoneSpendLede(zoneSpend.up, zoneSpend.down, min_year, max_year)}</p>
+          <p className="chart-label">Contract cost</p>
+          <ZonePair
+            rows={[
+              { label: 'Upstream', color: UP_COLOR, value: sumAmount(zoneSpend.up), text: formatPhp(sumAmount(zoneSpend.up)) },
+              { label: 'Downstream', color: DOWN_COLOR, value: sumAmount(zoneSpend.down), text: formatPhp(sumAmount(zoneSpend.down)) },
+            ]}
+          />
+          <p className="chart-label">Contracts</p>
+          <ZonePair
+            rows={[
+              { label: 'Upstream', color: UP_COLOR, value: zoneSpend.up.length, text: zoneSpend.up.length.toLocaleString('en-PH') },
+              { label: 'Downstream', color: DOWN_COLOR, value: zoneSpend.down.length, text: zoneSpend.down.length.toLocaleString('en-PH') },
+            ]}
+          />
+          <ul className="caveats">
+            <li>
+              Flood control works are usually sited along rivers and in built-up places, so a
+              lower upstream share of contract cost is expected. It is not a finding.
+            </li>
+            <li>The zones differ in size, so the figures are not a rate.</li>
+            <li>
+              Each point is the project site, not the area the project protects. A site near the
+              zone line can fall on either side.
+            </li>
+          </ul>
+        </section>
+      )}
+
+      <section className="beat">
         <h3>What do DPWH records report for these contracts?</h3>
         <p className="lede">{statusLede(features)}</p>
         <StatusList projects={features} />
@@ -634,6 +889,78 @@ function Funding({ current, linked, onTab }: Pick<PanelProps, 'current' | 'linke
       </section>
       {bridge}
     </>
+  )
+}
+
+/** The rows of a bar list as a table, the same rows the bars draw. */
+function GroupTable({ name, rows }: { name: string; rows: { label: string; count: number; amount: number | null; noCost: boolean }[] }) {
+  return (
+    <details className="table-view">
+      <summary>Show as table</summary>
+      <table>
+        <thead>
+          <tr>
+            <th>{name}</th>
+            <th>Contracts</th>
+            <th>Contract cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label}>
+              <th>{row.label}</th>
+              <td>{row.count.toLocaleString('en-PH')}</td>
+              <td>{row.noCost ? 'No contract cost on record' : formatPhp(row.amount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  )
+}
+
+/** Contract cost per place, the same rows the lede reads. */
+function PlaceBars({ rows }: { rows: { label: string; count: number; amount: number | null; noCost: boolean }[] }) {
+  const complete = rows.every((row) => row.amount !== null)
+  const max = complete ? Math.max(...rows.map((row) => row.amount!), 0) : null
+  return (
+    <ul className="category-bars place-bars">
+      {rows.map((row) => (
+        <li key={row.label}>
+          <span className="category-name">{row.label}</span>
+          <span className="category-track">
+            {row.amount !== null && row.amount > 0 && max !== null && max > 0 && (
+              <span className="category-fill" style={{ width: `${(row.amount / max) * 100}%` }} />
+            )}
+          </span>
+          <span className="category-value">
+            {row.noCost ? 'No contract cost on record' : formatPhp(row.amount)},{' '}
+            {row.count.toLocaleString('en-PH')} {row.count === 1 ? 'contract' : 'contracts'}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Upstream against downstream for one measure. Bars start at zero. */
+function ZonePair({ rows }: { rows: { label: string; color: string; value: number | null; text: string }[] }) {
+  const complete = rows.every((row) => row.value !== null)
+  const max = complete ? Math.max(...rows.map((row) => row.value!), 0) : null
+  return (
+    <ul className="category-bars">
+      {rows.map((row) => (
+        <li key={row.label}>
+          <span className="category-name">{row.label}</span>
+          <span className="category-track">
+            {row.value !== null && row.value > 0 && max !== null && max > 0 && (
+              <span className="category-fill" style={{ width: `${(row.value / max) * 100}%`, background: row.color }} />
+            )}
+          </span>
+          <span className="category-value">{row.text}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -652,14 +979,16 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
         <p className="empty">
           {!hasLoss && 'Satellite metrics for this area are not loaded yet. '}
           {!linked && 'DPWH projects are not linked to this area yet. '}
-          A side by side view needs both, so none is shown. Missing data is not a measured zero.
+          A side by side view needs both, so none is shown. Data that is not loaded is not a measured zero.
         </p>
+        <Bridge to="For review" onTab={onTab}>
+          What could a reviewer check next?
+        </Bridge>
       </section>
     )
   }
   const loss = sumLoss(current.loss, min_year, max_year)
   const amount = sumAmount(features)
-  const missing = missingCategories(features)
   const years = Array.from({ length: max_year - min_year + 1 }, (_, i) => min_year + i)
   // Both zones need loss rows and at least one linked contract between them. Empty is not zero.
   const zonesLoaded =
@@ -675,6 +1004,12 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
           { label: 'Downstream', data: down },
         ]
       : []
+  const zoneLossTotal = zonesLoaded
+    ? sumTotals([sumLoss(up!.loss, min_year, max_year), sumLoss(down!.loss, min_year, max_year)])
+    : null
+  const zoneAmountTotal = zonesLoaded
+    ? sumAmount([...up!.projects.features, ...down!.projects.features])
+    : null
 
   return (
     <>
@@ -698,7 +1033,7 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
           <li>Project points mark the construction site, not the area a project protects.</li>
           <li>Tree cover loss includes storm and fire damage, not only clearing.</li>
           <li>
-            Contract cost is the contract budget listed by DPWH, not the amount paid. The year is
+            Contract cost is the contract budget listed by DPWH. This data does not show what was paid. The year is
             the DPWH infrastructure year, which can differ from the year the work was built.
           </li>
         </ul>
@@ -725,8 +1060,8 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
               <tr>
                 <th>Zone</th>
                 <th>Tree cover loss</th>
-                <th>Contracts</th>
-                <th>Contract cost</th>
+                <th>Share of the loss</th>
+                <th>Share of the contract cost</th>
               </tr>
             </thead>
             <tbody>
@@ -734,8 +1069,18 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
                 <tr key={zone.label}>
                   <th>{zone.label}</th>
                   <td>{formatHa(sumLoss(zone.data.loss, min_year, max_year))}</td>
-                  <td>{zone.data.projects.features.length.toLocaleString('en-PH')}</td>
-                  <td>{formatPhp(sumAmount(zone.data.projects.features))}</td>
+                  <td>
+                    {share(
+                      sumLoss(zone.data.loss, min_year, max_year),
+                      zoneLossTotal,
+                    ) ?? 'No value'}
+                  </td>
+                  <td>
+                    {share(
+                      sumAmount(zone.data.projects.features),
+                      zoneAmountTotal,
+                    ) ?? 'No value'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -747,6 +1092,10 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
             </li>
             <li>The zones differ in size and in tree cover, so hectares are not a rate.</li>
             <li>
+              Shares are of the two zones together. The Funding tab shows the contract cost and
+              count in each zone.
+            </li>
+            <li>
               Each point is the project site, not the area the project protects. A site near the
               zone line can fall on either side.
             </li>
@@ -756,39 +1105,14 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
       )}
 
       <section className="beat">
-        <h3>What could a reviewer check next?</h3>
-        <ul className="next-steps">
-          {missing.length > 0 && (
-            <li>
-              No {listOr(missing)} contracts appear in the DPWH data here for {min_year} to{' '}
-              {max_year}. DENR, LGU, or other agency records may hold that work. Categories are
-              partly estimates read from contract descriptions.
-            </li>
-          )}
-          <li>DENR National Greening Program records for the same years and places.</li>
-          <li>LGU DRRM fund use inside this area.</li>
-          <li>A site visit to see the works and the land around them as they are today.</li>
-        </ul>
         <p className="finding">
           TANAW shows a spending pattern for review. It does not show cause, and it does not judge
           any project.
         </p>
-        <Bridge to="Live sensors" onTab={onTab}>
-          What are the stations reading now?
+        <Bridge to="For review" onTab={onTab}>
+          What could a reviewer check next?
         </Bridge>
       </section>
     </>
-  )
-}
-
-function LiveSensors() {
-  return (
-    <section>
-      <h3>Flood stations</h3>
-      <p className="empty">
-        No station is sending readings yet. The station reads temperature, humidity, and water
-        level on the device. Readings will appear here once it is connected to the network.
-      </p>
-    </section>
   )
 }

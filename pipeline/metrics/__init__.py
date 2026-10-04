@@ -25,3 +25,8 @@ IMPLEMENTED_METRICS: tuple[str, ...] = (
     "rainfall_max_1day",
     "heavy_rain_days",
 )
+
+# Registered in pipeline.registry and runnable with `python -m pipeline.run --metric`, but not
+# yet enabled for POST /analyze. Move a name to IMPLEMENTED_METRICS once its dry run and review
+# are done.
+CLI_ONLY_METRICS: tuple[str, ...] = ("flood_extent",)

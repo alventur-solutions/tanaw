@@ -17,9 +17,84 @@ FOREST_MIN_TREECOVER = 30  # percent canopy cover in 2000
 SCALE_M = 30
 MIN_VALID_FRACTION = 0.95
 
-# Years with a major typhoon over the study region (Ondoy 2009, Ulysses 2020).
-# Loss in these years may be natural, so the row is flagged for the reader.
-STORM_YEARS = {2009, 2020}
+# Major typhoon years per top-level area_id: year -> (storm names, late_season). Zones
+# (`<area_id>__up`, `<area_id>__down`) use their parent's years. An area_id with no entry gets
+# no storm flag. The lists are a short set of major storms from public records, not a complete
+# storm history. Loss in a storm year may be natural (wind throw, landslide).
+# late_season is True for a storm from Nov 1 on: Hansen dates loss to the first clear
+# observation, so that loss can show in the following year (flag `storm_prior_year`).
+STORM_YEARS: dict[str, dict[int, tuple[str, bool]]] = {
+    "pasig-marikina-tullahan": {
+        2009: ("Ondoy / Ketsana", False),
+        2020: ("Ulysses / Vamco", True),
+    },
+    "quezon-city": {
+        2009: ("Ondoy / Ketsana", False),
+        2020: ("Ulysses / Vamco", True),
+    },
+    "antipolo-rodriguez-uplands": {
+        2009: ("Ondoy / Ketsana", False),
+        2020: ("Ulysses / Vamco", True),
+    },
+    "pampanga-river-basin": {
+        2009: ("Pepeng / Parma, Ondoy / Ketsana", False),
+        2011: ("Pedring / Nesat", False),
+        2015: ("Lando / Koppu", False),
+        2020: ("Ulysses / Vamco", True),
+    },
+    "angat-river-basin": {
+        2009: ("Pepeng / Parma, Ondoy / Ketsana", False),
+        2011: ("Pedring / Nesat", False),
+        2015: ("Lando / Koppu", False),
+        2020: ("Ulysses / Vamco", True),
+    },
+    "cagayan-river-basin": {
+        2010: ("Juan / Megi", False),
+        2016: ("Lawin / Haima", False),
+        2018: ("Ompong / Mangkhut", False),
+        2020: ("Ulysses / Vamco", True),
+    },
+    "bicol-river-basin": {
+        2006: ("Reming / Durian", True),
+        2016: ("Nina / Nock-ten", True),
+        2019: ("Tisoy / Kammuri", True),
+        2020: ("Rolly / Goni", True),
+    },
+    "iloilo-river-basin": {
+        2008: ("Frank / Fengshen", False),
+        2013: ("Yolanda / Haiyan", True),
+        2019: ("Ursula / Phanfone", True),
+    },
+    "jalaur-river-basin": {
+        2008: ("Frank / Fengshen", False),
+        2013: ("Yolanda / Haiyan", True),
+        2019: ("Ursula / Phanfone", True),
+    },
+    "agusan-river-basin": {
+        2012: ("Pablo / Bopha", True),
+        2021: ("Odette / Rai", True),
+    },
+    "cagayan-de-oro-river-basin": {
+        2011: ("Sendong / Washi", True),
+        2017: ("Vinta / Tembin", True),
+    },
+}
+
+
+def storm_flag(area_id: str, year: int) -> str:
+    """`storm_year`, `storm_prior_year` (the year after a late season storm) or `ok`."""
+    storms = STORM_YEARS.get(area_id.split("__")[0], {})
+    if year in storms:
+        return "storm_year"
+    if year - 1 in storms and storms[year - 1][1]:
+        return "storm_prior_year"
+    return "ok"
+
+
+def storm_flags(year: int) -> dict[str, str]:
+    """area_id to flag for one year, for every top-level area and its zones."""
+    ids = [f"{parent}{zone}" for parent in STORM_YEARS for zone in ("", "__up", "__down")]
+    return {area_id: storm_flag(area_id, year) for area_id in ids}
 
 
 def loss_image(year: int) -> ee.Image:
@@ -37,7 +112,7 @@ def loss_image(year: int) -> ee.Image:
 def compute(year: int, areas: ee.FeatureCollection) -> ee.FeatureCollection:
     """One feature per area with area_id, year, metric, value, quality_flag."""
     in_range = FIRST_YEAR <= year <= LAST_YEAR
-    flag = "storm_year" if year in STORM_YEARS else "ok"
+    flags = ee.Dictionary(storm_flags(year))
 
     def no_data(feature: ee.Feature) -> ee.Feature:
         return ee.Feature(
@@ -70,7 +145,9 @@ def compute(year: int, areas: ee.FeatureCollection) -> ee.FeatureCollection:
                 "metric": METRIC,
                 "value": feature.get("sum"),
                 "quality_flag": ee.Algorithms.If(
-                    covered.gte(MIN_VALID_FRACTION), flag, "low_coverage"
+                    covered.gte(MIN_VALID_FRACTION),
+                    flags.get(feature.get("area_id"), "ok"),
+                    "low_coverage",
                 ),
             },
         )

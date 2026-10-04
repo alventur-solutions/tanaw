@@ -1,6 +1,6 @@
 // The sentences around each chart. Pure functions: the rows a chart draws go in, a string comes
 // out, so the text and the bars cannot drift apart.
-import { CATEGORIES, formatHa, formatMm, formatPhp, sumAmount, sumLoss } from './api'
+import { CATEGORIES, formatHa, formatMm, formatPhp, sumAmount, sumLoss, sumTotals } from './api'
 import type { MetricRow, ProjectFeature, ProjectProps } from './api'
 
 interface Rows {
@@ -8,11 +8,15 @@ interface Rows {
   rows: MetricRow[]
 }
 
-const plural = (count: number, word: string) =>
+export const plural = (count: number, word: string) =>
   `${count.toLocaleString('en-PH')} ${word}${count === 1 ? '' : 's'}`
 
 /** "from 2016 to 2025", or "in 2020" when the span is one year. */
-const span = (from: number, to: number) => (from === to ? `in ${from}` : `from ${from} to ${to}`)
+export const span = (from: number, to: number) => (from === to ? `in ${from}` : `from ${from} to ${to}`)
+
+/** Shown wherever a city's story leads with tree cover loss, on screen and in the printed brief. */
+export const URBAN_NOTE =
+  'Built-up surface and green space are not computed for this area yet. They are the land measures for a city. Tree cover loss is shown as supporting evidence only.'
 
 /** "a, b, or c" */
 export function listOr(items: string[]): string {
@@ -35,7 +39,9 @@ function flagNote(flags: (string | undefined)[]): string {
     .map((flag) =>
       flag === 'storm_year'
         ? ' This year is flagged as a major storm year, so part of that loss may be natural.'
-        : ` Data quality note: ${flag}.`,
+        : flag === 'storm_prior_year'
+          ? ' The year before is flagged as a major storm year, and loss from a storm late in the year can be dated to this year.'
+          : ` Data quality note: ${flag}.`,
     )
     .join('')
 }
@@ -129,7 +135,7 @@ export function zoneLossLede(up: MetricRow[], down: MetricRow[], from: number, t
 
 function noCost(features: ProjectFeature[]): string {
   const count = features.filter((f) => f.properties.amount_php == null).length
-  return count === 0 ? '' : ` ${count.toLocaleString('en-PH')} of them have no contract cost on record.`
+  return count === 0 ? '' : ` ${count.toLocaleString('en-PH')} of them ${count === 1 ? 'has' : 'have'} no contract cost on record.`
 }
 
 export function fundingLede(features: ProjectFeature[], from: number, to: number): string {
@@ -370,4 +376,317 @@ export function rainAlt(rows: MetricRow[]): string {
       : '') +
     (partial.length > 0 ? ` ${partial.join(', ')} is not complete.` : '')
   )
+}
+
+// Where contracts were sited, by the municipality DPWH lists.
+
+/** How many places get their own bar before the rest are grouped. */
+export const PLACES_SHOWN = 10
+
+export interface PlaceRow {
+  label: string
+  count: number
+  amount: number | null
+  /** True when no contract in the group has a contract cost on record. */
+  noCost: boolean
+}
+
+export interface Places {
+  top: PlaceRow[]
+  /** The named places after the first PLACES_SHOWN, as one row. Null when there are none. */
+  rest: (PlaceRow & { places: number }) | null
+  /** Contracts with no municipality on record. Null when every contract has one. */
+  unnamed: PlaceRow | null
+  named: number
+}
+
+const SMALL_WORDS = new Set(['of', 'and', 'de', 'del', 'la', 'ng'])
+
+/** "CITY OF MANILA (METROPOLITAN MANILA)" becomes "City of Manila (Metropolitan Manila)". */
+export function placeName(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[a-z]+/g, (word: string, at: number) =>
+      at > 0 && SMALL_WORDS.has(word) ? word : `${word[0].toUpperCase()}${word.slice(1)}`,
+    )
+}
+
+const placeGroup = (label: string, rows: ProjectFeature[]): PlaceRow => ({
+  label,
+  count: rows.length,
+  amount: sumAmount(rows),
+  noCost: rows.every((f) => f.properties.amount_php == null),
+})
+
+function byPlaceCost(a: PlaceRow, b: PlaceRow): number {
+  if (a.amount === null && b.amount !== null) return 1
+  if (a.amount !== null && b.amount === null) return -1
+  const difference = a.amount !== null && b.amount !== null ? b.amount - a.amount : 0
+  return difference || b.count - a.count || a.label.localeCompare(b.label)
+}
+
+/**
+ * Contracts grouped by municipality, largest contract cost first. The province field is not
+ * used: in this data it holds the DPWH district engineering office.
+ */
+export function placeRows(features: ProjectFeature[]): Places {
+  const byPlace = new Map<string, { label: string; rows: ProjectFeature[] }>()
+  const unnamed: ProjectFeature[] = []
+  for (const f of features) {
+    const raw = f.properties.municipality?.trim()
+    if (!raw) {
+      unnamed.push(f)
+      continue
+    }
+    const key = raw.toLowerCase()
+    const entry = byPlace.get(key) ?? { label: placeName(raw), rows: [] }
+    entry.rows.push(f)
+    byPlace.set(key, entry)
+  }
+  const named = [...byPlace.values()]
+    .map((p) => placeGroup(p.label, p.rows))
+    .sort(byPlaceCost)
+  const tail = named.slice(PLACES_SHOWN)
+  return {
+    top: named.slice(0, PLACES_SHOWN),
+    rest:
+      tail.length === 0
+        ? null
+        : {
+            label: plural(tail.length, 'other place'),
+            count: tail.reduce((t, p) => t + p.count, 0),
+            amount: sumTotals(tail.map((place) => place.amount)),
+            noCost: tail.every((p) => p.noCost),
+            places: tail.length,
+          },
+    unnamed: unnamed.length === 0 ? null : placeGroup('No municipality on record', unnamed),
+    named: features.length - unnamed.length,
+  }
+}
+
+export function placeLede(features: ProjectFeature[]): string {
+  const total = features.length
+  if (total === 0) return 'No DPWH flood control contracts appear in this data here.'
+  const places = placeRows(features)
+  if (places.named === 0) {
+    return `No municipality is on record for any of the ${plural(total, 'contract')} here.`
+  }
+  const listed =
+    places.named === total
+      ? 'A municipality is on record for every contract here.'
+      : `A municipality is on record for ${places.named.toLocaleString('en-PH')} of ${plural(total, 'contract')} here.`
+  const top = places.top[0]
+  const namedCost = sumTotals([
+    ...places.top.map((place) => place.amount),
+    ...(places.rest ? [places.rest.amount] : []),
+  ])
+  if (namedCost === null) {
+    return `${listed} A complete contract cost comparison between municipalities is unavailable because some costs are missing.`
+  }
+  const part = share(top.amount, namedCost)
+  if (part === null) {
+    return `${listed} Reported contract costs total PHP 0 for contracts with a municipality on record.`
+  }
+  return `${listed} Among them, the largest share of contract cost is sited in ${top.label}: ${formatPhp(top.amount)}, ${part} of the contract cost with a municipality on record.`
+}
+
+/** Contract cost and count in the two zones, the same rows the zone bars draw. */
+export function zoneSpendLede(up: ProjectFeature[], down: ProjectFeature[], from: number, to: number): string {
+  const both = up.length + down.length
+  if (both === 0) return `No DPWH flood control contracts are sited in either zone ${span(from, to)}.`
+  const totalCost = sumAmount([...up, ...down])
+  const cost = share(sumAmount(up), totalCost)
+  const count = `${up.length.toLocaleString('en-PH')} of the ${plural(both, 'contract')} in the two zones`
+  return cost === null
+    ? `Upstream holds ${count} ${span(from, to)}. ${totalCost === null ? 'A complete contract cost comparison is unavailable because some costs are missing.' : 'Reported contract costs total PHP 0 in the two zones.'}`
+    : `Upstream holds ${count} and ${cost} of their contract cost ${span(from, to)}.`
+}
+
+// How often heavy rain fell. A heavy rain day is a day when the area mean was 50 mm or more.
+
+const metricRows = (rows: MetricRow[], metric: string) =>
+  rows.filter((r) => r.metric === metric && r.value !== null).sort((a, b) => a.year - b.year)
+
+/** Complete years of heavy rain day counts. A partial year is a lower bound and is left out. */
+export function fullHeavyYears(rows: MetricRow[]): MetricRow[] {
+  return metricRows(rows, 'heavy_rain_days').filter((r) => r.quality_flag !== 'partial_year')
+}
+
+/** The smallest group of years compared. A group of fewer years is not compared. */
+export const MIN_GROUP_YEARS = 3
+
+/** The complete years split into two equal groups. With an odd count the middle year is in neither. */
+export function heavyHalves(
+  rows: MetricRow[],
+): { first: MetricRow[]; second: MetricRow[]; middle: number | null } | null {
+  const full = fullHeavyYears(rows)
+  const half = Math.floor(full.length / 2)
+  if (half < MIN_GROUP_YEARS) return null
+  return {
+    first: full.slice(0, half),
+    second: full.slice(full.length - half),
+    middle: full.length % 2 === 1 ? full[half].year : null,
+  }
+}
+
+const meanOf = (rows: MetricRow[]) => rows.reduce((t, r) => t + (r.value ?? 0), 0) / rows.length
+
+/** "about 4.2 days a year", and never "about 0.0" for a mean above zero. */
+export function daysAYear(mean: number): string {
+  if (mean === 0) return 'on no day in any year'
+  if (mean < 0.05) return 'on less than 0.1 days a year'
+  return `on about ${mean.toLocaleString('en-PH', { maximumFractionDigits: 1, minimumFractionDigits: 1 })} days a year`
+}
+
+const yearsOf = (rows: MetricRow[]) => `${rows[0].year} to ${rows[rows.length - 1].year}`
+
+export function heavyRainLede(rows: MetricRow[], place = 'here'): string {
+  const full = fullHeavyYears(rows)
+  if (full.length === 0) return 'No complete year of heavy rain day counts is loaded for this area yet.'
+  const halves = heavyHalves(rows)
+  if (halves === null) {
+    return `The area mean reached 50 mm or more ${daysAYear(meanOf(full))} ${place}, as the mean of the complete years ${span(full[0].year, full[full.length - 1].year)}.`
+  }
+  return (
+    `The area mean reached 50 mm or more ${daysAYear(meanOf(halves.first))} ${place} from ${yearsOf(halves.first)}, ` +
+    `and ${daysAYear(meanOf(halves.second))} from ${yearsOf(halves.second)}.`
+  )
+}
+
+/** The note on the two groups of years: which year is in neither, when the count is odd. */
+export function heavyGroupsNote(rows: MetricRow[]): string | null {
+  const halves = heavyHalves(rows)
+  if (halves === null) return null
+  return (
+    `The two groups hold ${plural(halves.first.length, 'complete year')} each.` +
+    (halves.middle === null ? '' : ` ${halves.middle}, the middle year, is in neither group.`) +
+    ' Compare the groups, not single years.'
+  )
+}
+
+/** The line under the heavy rain chart. With no year in focus it reads the wettest day on record. */
+export function heavyRainLine(rows: MetricRow[], year: number | null): string {
+  if (year !== null) return rainLine(rows, year)
+  const max = metricRows(rows, 'rainfall_max_1day').filter((r) => r.quality_flag !== 'partial_year')
+  if (max.length === 0) return 'No complete year of daily rainfall is loaded.'
+  const top = max.reduce((best, r) => ((r.value ?? 0) > (best.value ?? 0) ? r : best))
+  return `The wettest day in the complete years had an area mean of about ${formatMm(top.value ?? 0)}, in ${top.year}. Point at a year to read its count and its wettest day.`
+}
+
+export function heavyRainAlt(rows: MetricRow[]): string {
+  const days = metricRows(rows, 'heavy_rain_days')
+  if (days.length === 0) return 'Bar chart of heavy rain days per year. No rows yet.'
+  const partial = days.filter((r) => r.quality_flag === 'partial_year').map((r) => r.year)
+  return (
+    `Bar chart of days per year when the area mean was 50 mm or more, ${days[0].year} to ${days[days.length - 1].year}. ` +
+    heavyRainLede(rows) +
+    (partial.length > 0 ? ` ${partial.join(', ')} is not complete.` : '')
+  )
+}
+
+/** Contracts with no municipality on record, as a line under the place bars. Null when there are none. */
+export function unnamedPlaceLine(places: Places): string | null {
+  const row = places.unnamed
+  if (row === null) return null
+  return (
+    `${plural(row.count, 'contract')} ${row.count === 1 ? 'has' : 'have'} no municipality on record` +
+    (row.noCost ? ', and no contract cost on record.' : `, with a contract cost of ${formatPhp(row.amount)}.`) +
+    ' They are not drawn as a bar.'
+  )
+}
+
+// Which DPWH office a contract is listed under. In this data the province field holds the DPWH
+// office: district engineering offices, a few region names, and the Flood Control Management
+// Cluster. No value in it is a province.
+
+/** True for a value that names a region rather than an office, such as "Region III". */
+export const isRegionName = (value: string) => /\bregion\b/i.test(value)
+
+export interface Offices {
+  top: PlaceRow[]
+  rest: (PlaceRow & { places: number }) | null
+  /** Contracts with no office on record. Null when every contract has one. */
+  unlisted: PlaceRow | null
+  offices: number
+  regions: number
+  /** Contracts listed under a region name. */
+  regionContracts: number
+}
+
+/** Contracts grouped by the office DPWH lists, largest contract cost first, as listed. */
+export function officeRows(features: ProjectFeature[]): Offices {
+  const byOffice = new Map<string, ProjectFeature[]>()
+  const unlisted: ProjectFeature[] = []
+  for (const f of features) {
+    const office = f.properties.province?.trim().replace(/\s+/g, ' ')
+    if (!office) {
+      unlisted.push(f)
+      continue
+    }
+    byOffice.set(office, [...(byOffice.get(office) ?? []), f])
+  }
+  const all = [...byOffice.entries()]
+    .map(([label, rows]) => placeGroup(label, rows))
+    .sort(byPlaceCost)
+  const tail = all.slice(PLACES_SHOWN)
+  const regions = all.filter((o) => isRegionName(o.label))
+  return {
+    top: all.slice(0, PLACES_SHOWN),
+    rest:
+      tail.length === 0
+        ? null
+        : {
+            label: `${tail.length.toLocaleString('en-PH')} other ${tail.length === 1 ? 'office or region' : 'offices and regions'}`,
+            count: tail.reduce((t, o) => t + o.count, 0),
+            amount: sumTotals(tail.map((office) => office.amount)),
+            noCost: tail.every((o) => o.noCost),
+            places: tail.length,
+          },
+    unlisted: unlisted.length === 0 ? null : placeGroup('No office on record', unlisted),
+    offices: all.length - regions.length,
+    regions: regions.length,
+    regionContracts: regions.reduce((t, o) => t + o.count, 0),
+  }
+}
+
+/** "16 DPWH offices and 2 region names" */
+function officeCount(o: Offices): string {
+  const parts = [
+    o.offices > 0 && `${o.offices.toLocaleString('en-PH')} DPWH ${o.offices === 1 ? 'office' : 'offices'}`,
+    o.regions > 0 && `${o.regions.toLocaleString('en-PH')} region ${o.regions === 1 ? 'name' : 'names'}`,
+  ].filter(Boolean)
+  return parts.join(' and ')
+}
+
+export function officeLede(features: ProjectFeature[]): string {
+  if (features.length === 0) return 'No DPWH flood control contracts appear in this data here.'
+  const o = officeRows(features)
+  if (o.top.length === 0) return 'No DPWH office is on record for these contracts.'
+  const top = o.top[0]
+  const listed = `The contracts here are listed under ${officeCount(o)}.`
+  const listedCost = sumTotals([
+    ...o.top.map((office) => office.amount),
+    ...(o.rest ? [o.rest.amount] : []),
+  ])
+  if (listedCost === null) {
+    return `${listed} A complete contract cost comparison between offices is unavailable because some costs are missing.`
+  }
+  const part = share(top.amount, listedCost)
+  if (part === null) {
+    return `${listed} Reported contract costs total PHP 0 for contracts with an office on record.`
+  }
+  return `${listed} ${top.label} holds the largest share of the contract cost here: ${formatPhp(top.amount)}, ${part}, on ${plural(top.count, 'contract')}.`
+}
+
+/** The note on region names and on contracts with no office. Null when neither applies. */
+export function officeNote(features: ProjectFeature[]): string | null {
+  const o = officeRows(features)
+  const parts = [
+    o.regionContracts > 0 &&
+      `${plural(o.regionContracts, 'contract')} ${o.regionContracts === 1 ? 'lists' : 'list'} a region name rather than an office. ${o.regionContracts === 1 ? 'It is' : 'They are'} shown as DPWH lists ${o.regionContracts === 1 ? 'it' : 'them'}.`,
+    o.unlisted &&
+      `${plural(o.unlisted.count, 'contract')} ${o.unlisted.count === 1 ? 'has' : 'have'} no office on record and ${o.unlisted.count === 1 ? 'is' : 'are'} not drawn as a bar.`,
+  ].filter(Boolean)
+  return parts.length === 0 ? null : parts.join(' ')
 }

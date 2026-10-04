@@ -1,4 +1,4 @@
-import { LngLatBounds, Map as MapLibre, Marker, NavigationControl } from 'maplibre-gl'
+import { LngLatBounds, Map as MapLibre, Marker, NavigationControl, Popup } from 'maplibre-gl'
 import type { GeoJSONSource } from 'maplibre-gl'
 import { useEffect, useRef, useState } from 'react'
 import { CATEGORIES, fetchGreenery } from './api'
@@ -177,20 +177,40 @@ export default function MapView({
           'line-dasharray': [3, 2],
         },
       })
+      const categoryColor = [
+        'match',
+        ['get', 'category'],
+        ...CATEGORIES.flatMap((c) => [c.key, c.color]),
+        '#888888',
+      ] as unknown as string
+      // A soft patch on the ground under each site, from street zoom in. It lies flat on the
+      // tilted map, so a site reads as a place and not as a dot floating over the buildings.
+      instance.addLayer({
+        id: 'projects-ground',
+        type: 'circle',
+        source: 'projects',
+        minzoom: 12,
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 6, 16, 16],
+          'circle-color': categoryColor,
+          'circle-opacity': ['interpolate', ['linear'], ['zoom'], 12, 0, 13, 0.2],
+          'circle-blur': 0.5,
+          'circle-pitch-alignment': 'map',
+        },
+      })
+      // The site itself: small from far away, a clear white ring up close. Newer contracts draw
+      // on top where several share a spot.
       instance.addLayer({
         id: 'projects',
         type: 'circle',
         source: 'projects',
+        layout: { 'circle-sort-key': ['get', 'year'] },
         paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 1.5, 9, 3, 13, 6],
-          'circle-color': [
-            'match',
-            ['get', 'category'],
-            ...CATEGORIES.flatMap((c) => [c.key, c.color]),
-            '#888888',
-          ] as unknown as string,
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 1.2, 9, 2.5, 13, 4.5, 16, 6.5],
+          'circle-color': categoryColor,
+          'circle-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.75, 11, 0.95],
           'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 1,
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 5, 0, 9, 0.5, 13, 1.5, 16, 2],
         },
       })
       instance.addLayer({
@@ -199,8 +219,8 @@ export default function MapView({
         source: 'projects',
         filter: ['==', ['get', 'component_id'], ''],
         paint: {
-          'circle-radius': 11,
-          'circle-color': 'rgba(0,0,0,0)',
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 7, 13, 10, 16, 13],
+          'circle-color': 'rgba(255,255,255,0.35)',
           'circle-stroke-color': INK,
           'circle-stroke-width': 2,
         },
@@ -224,6 +244,21 @@ export default function MapView({
           onSelectRef.current(ordered[0][0], ordered.slice(1).map(([id]) => id))
         }
       })
+      // Pointing at a site names its type of work and infrastructure year before the click.
+      const hint = new Popup({ closeButton: false, closeOnClick: false, offset: 10, className: 'site-hint' })
+      instance.on('mousemove', 'projects', (event) => {
+        const features = event.features ?? []
+        const first = features[0]
+        if (!first) return
+        const category = CATEGORIES.find((c) => c.key === first.properties.category)
+        const sites = new Set(features.map((f) => String(f.properties.component_id))).size
+        const label = `${category?.label ?? 'Flood control'}, ${first.properties.year}`
+        hint
+          .setLngLat((first.geometry as GeoJSON.Point).coordinates as [number, number])
+          .setText(sites > 1 ? `${label}, and ${sites - 1} more at this spot` : label)
+          .addTo(instance)
+      })
+      instance.on('mouseleave', 'projects', () => hint.remove())
       for (const layer of ['projects', 'areas-fill']) {
         instance.on('mouseenter', layer, () => (instance.getCanvas().style.cursor = 'pointer'))
         instance.on('mouseleave', layer, () => (instance.getCanvas().style.cursor = ''))

@@ -23,6 +23,7 @@ from funding.clean_dpwh import (
     ROOT,
     assign_areas,
     classify,
+    classify_from_description,
     has_point,
     load_areas,
     print_summary,
@@ -94,13 +95,10 @@ def clean(raw: pd.DataFrame, lookup: pd.DataFrame | None = None) -> pd.DataFrame
     out["type_of_work"] = known["type_of_work"]
     description = known["fc_description"].fillna(text["description"])
     out["category"] = [
-        classify(
-            # No TypeofWork: the description stands in for it.
-            description if pd.isna(work) else work,
-            None if pd.isna(description) else description,
-        )
-        if not (pd.isna(work) and pd.isna(description))
-        else "other"
+        # No TypeofWork: the description names the work (an estimate, flagged below).
+        classify_from_description(None if pd.isna(description) else description)
+        if pd.isna(work)
+        else classify(work, None if pd.isna(description) else description)
         for work, description in zip(out["type_of_work"], description, strict=True)
     ]
     # A budget of zero or less is a placeholder in the source, not an amount.

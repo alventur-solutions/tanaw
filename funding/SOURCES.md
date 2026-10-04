@@ -58,7 +58,8 @@ Notes
 - Coordinates of the two files agree within about 200 m for only 57 percent of the shared
   contracts. The CSV coordinates are kept for the contracts it holds.
 - 22,845 flood control contracts have no `TypeofWork`. Their category is read from the
-  description and flagged `category_from_description`.
+  description and flagged `category_from_description` (rules: `DESCRIPTION_KEYWORDS` in
+  `funding/clean_dpwh.py`).
 - 2,491 flood control contracts have no coordinates. They are loaded without a point and are
   in no study area.
 - `amountPaid` is zero for every flood control row and is not used.

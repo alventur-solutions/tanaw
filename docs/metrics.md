@@ -24,7 +24,8 @@ inside the study area.
 | Flag | Meaning |
 |---|---|
 | `ok` | At least 95 percent of the area has Hansen data. |
-| `storm_year` | Same coverage, but the year had a major typhoon over the region (2009 Ondoy, 2020 Ulysses). Part of the loss may be natural. |
+| `storm_year` | Same coverage, but the year is one of the area's major typhoon years (table below). Part of the loss may be natural. |
+| `storm_prior_year` | Same coverage, and the year before was a major typhoon year with the storm in November or December. Hansen dates loss to the first clear observation, so loss from that storm can show in this year. |
 | `low_coverage` | Less than 95 percent of the area has Hansen data. Treat the value as a lower bound. |
 | `no_data` | Year is outside 2001 to 2025. Value is empty. |
 
@@ -40,13 +41,34 @@ inside the study area.
   part of any rise between early and late years can come from the method. Compare multi-year
   windows and avoid reading a single year as a trend.
 - Loss can be dated a year late when clouds hide the change, which is common in the wet season.
+  Storms in November or December are the clearest case, so the year after one carries
+  `storm_prior_year`. A storm earlier in the year is flagged only in its own year.
 - For a river basin, the rows for `<area_id>__up` and `<area_id>__down` add up to the row for the
   whole basin, within rounding.
 
+**Storm years per area**
+
+Storm years are set per top-level area in `STORM_YEARS` in `pipeline/metrics/tree_cover_loss.py`.
+Zones (`<area_id>__up`, `<area_id>__down`) use their parent's years. An area with no entry has no
+storm flag. A year that is both a storm year and the year after a late storm is `storm_year`.
+The list is a short set of major storms from public records. It is not a complete storm
+history, and a year without a flag can still hold storm damage. "Late" means November or
+December, so the next year gets `storm_prior_year`.
+
+| Area | Storm years (storm names) | Late season |
+|---|---|---|
+| `pasig-marikina-tullahan`, `quezon-city`, `antipolo-rodriguez-uplands` | 2009 (Ondoy / Ketsana), 2020 (Ulysses / Vamco) | 2020 |
+| `pampanga-river-basin`, `angat-river-basin` | 2009 (Pepeng / Parma, Ondoy / Ketsana), 2011 (Pedring / Nesat), 2015 (Lando / Koppu), 2020 (Ulysses / Vamco) | 2020 |
+| `cagayan-river-basin` | 2010 (Juan / Megi), 2016 (Lawin / Haima), 2018 (Ompong / Mangkhut), 2020 (Ulysses / Vamco) | 2020 |
+| `bicol-river-basin` | 2006 (Reming / Durian), 2016 (Nina / Nock-ten), 2019 (Tisoy / Kammuri), 2020 (Rolly / Goni) | all |
+| `iloilo-river-basin`, `jalaur-river-basin` | 2008 (Frank / Fengshen), 2013 (Yolanda / Haiyan), 2019 (Ursula / Phanfone) | 2013, 2019 |
+| `agusan-river-basin` | 2012 (Pablo / Bopha), 2021 (Odette / Rai) | all |
+| `cagayan-de-oro-river-basin` | 2011 (Sendong / Washi), 2017 (Vinta / Tembin) | all |
+| `davao-river-basin` | none listed | none |
+
 ## Rainfall metrics (CHIRPS)
 
-Four metrics share one source and one helper, `pipeline/metrics/chirps.py`. The flood extent
-metric (`flood_ha_per_mm`) should reuse that helper for its 3-day rainfall.
+Four metrics share one source and one helper, `pipeline/metrics/chirps.py`.
 
 | Metric | Module | Unit | Definition |
 |---|---|---|---|
@@ -60,7 +82,7 @@ metric (`flood_ha_per_mm`) should reuse that helper for its 3-day rainfall.
 | Source | CHIRPS Daily, `UCSB-CHG/CHIRPS/DAILY`, band `precipitation` (mm per day) |
 | Years | 1981 to 2026 (the current year is flagged partial) |
 | Scale | 0.05 degrees, about 5.5 km. The area mean weights each pixel by the fraction inside the area. |
-| Study types | Context for all three. Headline for the "should this place be monitored" insight and the base for flood per mm of rain. |
+| Study types | Context for all three. Headline for the "should this place be monitored" insight. |
 
 **quality_flag**
 
@@ -80,22 +102,42 @@ metric (`flood_ha_per_mm`) should reuse that helper for its 3-day rainfall.
 - A CHIRPS day runs 00:00 to 24:00 UTC, which is 08:00 to 08:00 Philippine time.
 - No database migration is needed: `satellite_metrics.metric` is free text.
 
-## Flood metrics (Sentinel-1)
+## Flood extent (Sentinel-1)
 
-Two metrics share one helper, `pipeline/metrics/sar_flood.py`, which holds the method, the
-thresholds and the flag priority. Rainfall comes from `chirps.daily_area_series`.
+**Status: on hold. Do not export.** The code runs and is registered for the command line only
+(`CLI_ONLY_METRICS`), and no rows are in the database. A review of the first dry run
+(2026-10-04) found that the values are not ready to publish:
+
+- Dense built-up zones such as Pasig-Marikina-Tullahan downstream are flagged `ok`, because the
+  urban flag follows `study_type`. Radar does not see water between buildings, so a small value
+  there would read as little flooding.
+- Detected area did not follow rainfall in the dry run. It looks like seasonal water (reservoir
+  and lake margins, rice fields) more than flood events.
+- The date of the largest day and the number of passes are not stored, so a value cannot be
+  checked against a known event.
+- Nothing is validated against a mapped flood. The proposed check is Ulysses (Vamco) in the
+  Cagayan Valley, November 2020, against a UNOSAT or DOST-ASTI flood map.
+
+`flood_ha_per_mm` (flooded hectares per mm of 3-day rain) was removed. Because detected area did
+not follow rain, the ratio was mostly one divided by rain, so it said little about the land. Its
+module, flag and tests are deleted.
+
+Before an export: a built-up mask from measured built-up share, a stricter permanent and
+recurring water mask, the date and pass count stored with each row, and the validation above.
+
+The metric is `flood_extent`, in `pipeline/metrics/flood_extent.py`. The method, the thresholds
+and the flag priority are in `pipeline/metrics/sar_flood.py`.
 
 | Metric | Module | Unit | Definition |
 |---|---|---|---|
 | `flood_extent` | `flood_extent.py` | ha | Largest flooded area of any single acquisition day between Jun 1 and Nov 30. One event, not a season total. |
-| `flood_ha_per_mm` | `flood_ha_per_mm.py` | ha/mm | Median over acquisition days with at least 10 mm of rain in the 3 days before (`MIN_EVENT_RAIN_MM`) of flooded hectares divided by that rain. |
 
 | | |
 |---|---|
-| Source | Sentinel-1 GRD, `COPERNICUS/S1_GRD`, IW mode, VV only, one orbit direction per area. `flood_ha_per_mm` also uses `UCSB-CHG/CHIRPS/DAILY`. Permanent water from `JRC/GSW1_4/GlobalSurfaceWater`, slope from `USGS/SRTMGL1_003`. |
+| Source | Sentinel-1 GRD, `COPERNICUS/S1_GRD`, IW mode, VV only, one orbit direction per feature. Permanent water from `JRC/GSW1_4/GlobalSurfaceWater`, slope from `USGS/SRTMGL1_003`. |
 | Years | 2015 to 2026 (the current year is flagged partial). No Sentinel-1 value exists before 2015, so flood trends begin there. |
 | Scale | 10 m for areas of 100,000 ha or less, 30 m for larger areas. |
-| Study types | `river_basin` downstream zones are the intended use. Unreliable for `urban` and for steep `rural_upland` areas (flagged). |
+| Study types | Not settled. Radar suits open floodplains. Built-up zones, including downstream zones such as Pasig-Marikina-Tullahan downstream, are unreliable, and so are steep uplands. Only `urban` and steep areas carry a flag today. |
 
 Flood pixel: VV below -16 dB and at least 3 dB darker than the Jan 1 to Apr 30 median of the
 same year and direction, after a 50 m focal median. Pixels with water occurrence above 80
@@ -107,7 +149,6 @@ percent and slopes above 5 degrees are removed. Scenes of one UTC day are mosaic
 |---|---|
 | `ok` | None of the conditions below. |
 | `no_data` | Year outside 2015 to 2026, or no usable VV images (none in the baseline or wet window, or no day covering at least 10 percent of the area). Value is empty. |
-| `no_rain_events` | `flood_ha_per_mm` only. Scenes exist, but none had 10 mm of rain in the 3 days before, or CHIRPS was missing. Value is empty. |
 | `urban_unreliable` | Urban area. VV sees water between buildings poorly, so the value is a lower bound of open water, not a count of flooded streets. |
 | `steep_terrain` | More than half of the land is steeper than 5 degrees and cannot be judged. |
 | `partial_year` | The wet season is not over, or the newest scenes may not be ingested yet. |
@@ -120,14 +161,23 @@ percent and slopes above 5 degrees are removed. Scenes of one UTC day are mosaic
   care, and an empty value is never a zero.
 - The value shows where radar saw standing water. It does not say why the water was there or
   how long it stayed. Scenes are a few days apart, so a short flood between two passes is missed.
+- Detected water includes rice fields, reservoir and lake margins, and other seasonal water. The
+  method does not separate these from flood.
+- The dry-season baseline depends on how dry that year was. In a wet early year the baseline is
+  darker and floods are under-counted, in a dry year over-counted.
+- The orbit direction and the scale (10 m or 30 m) are chosen per feature, so a zone and its
+  whole area can use different ones. Compare an area with itself over the years before
+  comparing areas.
 - Large basins are rarely covered by one scene. Zones and the whole area pick their own best
   day, so their rows do not add up. Never add them.
-- The 10 m and 30 m scales are not exactly comparable. Compare an area with itself over the years
-  before comparing areas.
-- Relative orbits are not separated, so incidence angle differs between scenes. After 2021 only
-  one Sentinel-1 satellite is active, which halves the number of scenes.
-- Rain is the CHIRPS area mean (about 5.5 km pixels), so local rain can differ from it. The
-  10 mm minimum and the 3 day window are choices, not official categories.
+- The wet window ends on Nov 30, so a December flood is not seen.
+- Scene counts change by year. Sentinel-1B was lost in December 2021, so 2022 to 2024 have one
+  active satellite and about half the scenes of earlier years. Sentinel-1C adds scenes from
+  2025.
+- The nearest pass can miss the peak. For Carina in July 2024 the nearest pass in the Pasig
+  downstream dry run was before the peak, and it showed under 1 ha that day.
+- In the dry run, detected area did not follow rainfall: Pasig downstream stayed within about
+  4 to 17 ha across a wet season whatever the rain before each pass.
 - The thresholds (-16 dB, 3 dB, 5 degrees, 80 percent) come from the project method and are not
   calibrated against mapped floods yet.
 - No database migration is needed: `satellite_metrics.metric` is free text.

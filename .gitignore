@@ -31,3 +31,4 @@ iot/server/*.db
 
 # Large raw downloads
 data/raw/
+data/osm/

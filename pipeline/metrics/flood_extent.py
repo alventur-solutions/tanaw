@@ -29,4 +29,4 @@ def compute(
     year: int, areas: ee.FeatureCollection, today: date | None = None
 ) -> ee.FeatureCollection:
     """One feature per area with area_id, year, metric, value, quality_flag."""
-    return sar_flood.compute_flood(year, areas, METRIC, False, max_flood_ha, today)
+    return sar_flood.compute_flood(year, areas, METRIC, max_flood_ha, today)
