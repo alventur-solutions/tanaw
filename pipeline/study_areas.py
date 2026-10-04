@@ -148,6 +148,15 @@ def ee_project() -> str:
 def init_ee():
     import ee
 
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        import google.auth
+
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/earthengine"]
+        )
+        ee.Initialize(credentials=credentials, project=ee_project())
+        return ee
+
     ee.Initialize(project=ee_project())
     return ee
 

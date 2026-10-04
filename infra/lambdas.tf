@@ -123,7 +123,8 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = merge(
       { TANAW_ENV = var.environment },
-      var.api_database_url == null ? {} : { DATABASE_URL = var.api_database_url }
+      var.api_database_url == null ? {} : { DATABASE_URL = var.api_database_url },
+      var.api_ee_project == null ? {} : { EE_PROJECT = var.api_ee_project }
     )
   }
 }
@@ -137,7 +138,7 @@ resource "aws_lambda_function_url" "api" {
   cors {
     allow_credentials = false
     allow_headers     = ["authorization", "content-type"]
-    allow_methods     = ["GET", "POST", "OPTIONS"]
+    allow_methods     = ["GET", "POST"]
     allow_origins     = local.api_cors_origins
     max_age           = 300
   }

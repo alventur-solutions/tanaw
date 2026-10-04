@@ -64,6 +64,18 @@ variable "api_database_url" {
   sensitive   = true
 }
 
+variable "api_ee_project" {
+  description = "Google Cloud project ID registered for Earth Engine, used by the API Lambda when Earth Engine routes are enabled."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.api_ee_project == null ? true : trimspace(var.api_ee_project) != ""
+    error_message = "api_ee_project must be a non-empty Google Cloud project ID when set."
+  }
+}
+
 variable "api_cors_origins" {
   description = "Optional explicit browser origins for the API Function URL. Defaults to this stack's CloudFront domain."
   type        = list(string)
@@ -106,7 +118,7 @@ variable "api_memory_size" {
 variable "api_timeout_seconds" {
   description = "API Lambda timeout in seconds."
   type        = number
-  default     = 30
+  default     = 300
 
   validation {
     condition     = var.api_timeout_seconds >= 1 && var.api_timeout_seconds <= 900
