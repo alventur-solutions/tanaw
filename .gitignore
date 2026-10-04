@@ -17,6 +17,10 @@ funding/clean/
 node_modules/
 dashboard/dist/
 dashboard/tsconfig.tsbuildinfo
+
+# Claude Code config: kept on disk, not tracked (Kiro uses .kiro/)
+.claude/
+
 .claude/settings.local.json
 .claude/worktrees/
 ghostwatch/

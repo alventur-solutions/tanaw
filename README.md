@@ -2,7 +2,7 @@
 
 Topographic Assessment for National Adaptation Works.
 
-## Claude Code setup in this repo
+## Kiro setup in this repo
 
 | Type | Name | Use it for |
 |---|---|---|

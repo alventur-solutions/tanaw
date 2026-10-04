@@ -10,13 +10,16 @@
 #include "config.h"
 
 #define DHT_PIN     4
-#define WATER_PIN   14
+// GPIO34 is on ADC1 (works while WiFi is active) and is input-only, which suits
+// an analog sensor. ADC2 pins (e.g. GPIO14) cannot be read once WiFi is on.
+#define WATER_PIN   34
 #define OLED_SDA    21
 #define OLED_SCL    22
 #define GREEN_LED   25
 #define YELLOW_LED  26
 #define RED_LED     27
 #define BUZZER_PIN  23
+#define BUZZER_CHANNEL 0  // LEDC channel used to drive the buzzer
 
 // Replace these examples with your measured dry and full readings.
 const int WATER_DRY = 0;
@@ -31,7 +34,10 @@ const float WARNING_TEMP = 38.0;
 const float DANGER_TEMP = 40.0;
 
 // How often to POST readings to the server, in milliseconds.
-const unsigned long UPLOAD_INTERVAL_MS = 10000;
+// 60s keeps Lambda invocations and Neon writes low (about 1,440 per day per
+// station). Sensors are still read every 2s locally for the display and buzzer,
+// so alerts stay responsive; only the network upload is less frequent.
+const unsigned long UPLOAD_INTERVAL_MS = 60000;
 
 DHT dht(DHT_PIN, DHT22);
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
@@ -211,28 +217,48 @@ void uploadReading() {
              STATION_ID, STATION_TYPE, tempField, humField, water_cm);
   }
 
-  WiFiClientSecure client;
-  // For a self-signed dev server, skip cert validation. In production,
-  // pin the server certificate with client.setCACert(...).
-  client.setInsecure();
+  // Pick the client by URL scheme: plain WiFiClient for http:// (Option A,
+  // FastAPI on :8000) and WiFiClientSecure for https:// (if TLS is in front).
+  bool useTls = (strncmp(SERVER_URL, "https:", 6) == 0);
 
-  HTTPClient https;
-  if (!https.begin(client, SERVER_URL)) {
-    Serial.println("HTTPS begin() failed.");
+  WiFiClient plainClient;
+  WiFiClientSecure tlsClient;
+  HTTPClient http;
+  bool began;
+
+  if (useTls) {
+    // Self-signed dev server: skip cert validation. In production, pin the
+    // server certificate with tlsClient.setCACert(...).
+    tlsClient.setInsecure();
+    began = http.begin(tlsClient, SERVER_URL);
+  } else {
+    began = http.begin(plainClient, SERVER_URL);
+  }
+
+  if (!began) {
+    Serial.println("HTTP begin() failed.");
     return;
   }
-  https.addHeader("Content-Type", "application/json");
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
+  http.addHeader("Content-Type", "application/json");
   if (strlen(STATION_TOKEN) > 0) {
-    https.addHeader("Authorization", String("Bearer ") + STATION_TOKEN);
+    http.addHeader("Authorization", String("Bearer ") + STATION_TOKEN);
   }
 
-  int code = https.POST((uint8_t*)body, strlen(body));
+  int code = http.POST((uint8_t*)body, strlen(body));
   if (code > 0) {
     Serial.printf("POST %s -> %d\n", SERVER_URL, code);
+    if (code >= 400) {
+      String response = http.getString();
+      if (response.length() > 0) {
+        Serial.printf("Server response: %s\n", response.c_str());
+      }
+    }
   } else {
-    Serial.printf("POST failed: %s\n", https.errorToString(code).c_str());
+    Serial.printf("POST failed: %s\n", http.errorToString(code).c_str());
   }
-  https.end();
+  http.end();
 }
 
 void drawScreen(bool showPercentage) {
@@ -284,13 +310,17 @@ void setup() {
   pinMode(GREEN_LED, OUTPUT);
   pinMode(YELLOW_LED, OUTPUT);
   pinMode(RED_LED, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
   pinMode(WATER_PIN, INPUT);
 
   digitalWrite(GREEN_LED, LOW);
   digitalWrite(YELLOW_LED, LOW);
   digitalWrite(RED_LED, LOW);
-  noTone(BUZZER_PIN);
+
+  // Attach the buzzer to a LEDC PWM channel so tones work on ESP32 Arduino
+  // core 2.x. Channel 0, 2 kHz base, 8-bit resolution.
+  ledcSetup(BUZZER_CHANNEL, 2000, 8);
+  ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
+  ledcWriteTone(BUZZER_CHANNEL, 0);  // start silent
 
   analogReadResolution(12);
   analogSetPinAttenuation(WATER_PIN, ADC_11db);
@@ -330,12 +360,13 @@ void loop() {
 
   now = millis();
 
-  // Passive buzzer: pulse a 2 kHz tone 250 ms on / 250 ms off
-  // while in the danger state.
-  if (buzzerActive && (now % 500UL < 250UL)) {
-    tone(BUZZER_PIN, 2000);
-  } else {
-    noTone(BUZZER_PIN);
+  // Passive buzzer: pulse a 2 kHz tone 250 ms on / 250 ms off while in the
+  // danger state. Only change the LEDC output when the on/off state flips.
+  static bool buzzerOn = false;
+  bool wantOn = buzzerActive && (now % 500UL < 250UL);
+  if (wantOn != buzzerOn) {
+    buzzerOn = wantOn;
+    ledcWriteTone(BUZZER_CHANNEL, buzzerOn ? 2000 : 0);
   }
 
   if (now - lastDisplay >= 100) {
