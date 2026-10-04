@@ -40,7 +40,8 @@ export default function ProjectCard({
   const p = project.properties
   const [lon, lat] = project.geometry.coordinates
   const category = CATEGORIES.find((c) => c.key === p.category)
-  const place = [p.municipality, p.province].filter(Boolean).join(', ')
+  // The province field holds the DPWH office, so only the municipality is shown as the place.
+  const place = p.municipality ?? ''
   const back = area ?? cameFrom
   const window = areaData?.projects
   const years = window
@@ -77,6 +78,7 @@ export default function ProjectCard({
           <Field label="Approved budget" value={p.abc_php == null ? null : formatPhp(p.abc_php)} />
           <Field label="Contractor" value={p.contractor} />
           <Field label="Type of work" value={p.type_of_work} />
+          <Field label="DPWH office, as listed" value={p.province} />
           <Field
             label="Reported progress"
             value={p.progress_pct == null ? null : `${p.progress_pct.toFixed(0)} percent`}

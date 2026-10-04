@@ -24,6 +24,7 @@ Demo set: Pasig-Marikina-Tullahan (basin), Rodriguez/Antipolo uplands (rural), Q
 - `pipeline/areas/` study area GeoJSON files
 - `pipeline/gee_app/` Earth Engine App (JavaScript) prototype
 - `data/raw/` untouched source files (`data/raw/dpwh/` is not in git, sources listed in `funding/SOURCES.md`), `funding/clean/` cleaned output (not in git, rebuilt with `python -m funding.clean_dpwh_transparency`)
+- `data/osm/` OpenStreetMap waterways, bridge crossings, and urban roads as GeoParquet (not in git, rebuilt with `python -m pipeline.osm build`)
 - `db/migrations/` PostgreSQL + PostGIS (Alembic, config in `alembic.ini`)
 - `api/` FastAPI (on demand analysis with cache, job polling)
 - `firmware/` ESP32 station (PlatformIO, Arduino)
@@ -53,7 +54,7 @@ Demo set: Pasig-Marikina-Tullahan (basin), Rodriguez/Antipolo uplands (rural), Q
 - Coverage is 2016 to 2025 in full. Every funding query defaults to 2016 to 2025, and `include_partial_years=true` adds the other years with a caveat.
 - Study areas overlap, so a project links to every area it falls in (`funding_project_areas`). Compute every funding total per `area_id` through that table. Never add totals across areas.
 - Coordinates are the project site, not the area it protects. The two DPWH files disagree on the site for many contracts, so treat a point near an area boundary with care.
-- Classify into: drainage, river_structure, slope_protection, pumping, other. TypeofWork decides where the source has it. A contract without TypeofWork is classified from its description and carries `quality_flag = category_from_description`: treat that category as an estimate. A pumping station in the description sets the category to pumping and overrides TypeofWork (DPWH files pumping stations under general types). A pump on its own does not count.
+- Classify into: drainage, river_structure, slope_protection, pumping, other. TypeofWork decides where the source has it. A contract without TypeofWork is classified from its description and carries `quality_flag = category_from_description`: treat that category as an estimate. A pumping station in the description sets the category to pumping and overrides TypeofWork (DPWH files pumping stations under general types). A pump on its own does not count. From the description, the category is the work named first (slope protection, drainage or river/bank/coastal flood structure words, in `DESCRIPTION_KEYWORDS` in `funding/clean_dpwh.py`) after program headings such as "Flood Mitigation Structures and Drainage Systems" are removed. Text that names no work stays `other`.
 - Status and progress are as reported by DPWH. Show them as "reported status", never as a finding about the project.
 
 ## IoT stations
@@ -74,6 +75,7 @@ Run every command below inside the project virtual environment `.venv`. The syst
 - Study areas: `python -m pipeline.study_areas build|upload|load` (GeoJSON, Earth Engine assets, `study_areas` table)
 - Clean DPWH: `python -m funding.clean_dpwh_transparency data/raw/dpwh/dpwh_transparency_data.parquet --flood-control-csv data/raw/funding/<file>.csv`
 - Load DPWH: `python -m funding.load_dpwh funding/clean/dpwh_transparency.parquet --replace-source dpwh_flood_control`
+- OSM base data: `python -m pipeline.osm fetch`, then `build`, then `load` (Overpass tiles to `data/raw/osm/`, GeoParquet to `data/osm/`, tables `osm_waterways`, `osm_crossings`, `osm_roads`). See `docs/osm.md`
 - Migrate: `alembic upgrade head` (preview SQL with `alembic upgrade head --sql`)
 - API: `uvicorn api.main:app --reload`
 - Firmware: `pio run -d firmware`

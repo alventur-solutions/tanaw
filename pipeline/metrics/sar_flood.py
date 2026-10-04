@@ -1,4 +1,4 @@
-"""Shared Sentinel-1 flood handling for flood_extent and flood_ha_per_mm.
+"""Shared Sentinel-1 flood handling for flood_extent.
 
 Method (follows .claude/skills/flood-extent-sar, with the choices below made explicit)
 
@@ -30,9 +30,8 @@ Area types
 Yearly value
     flood_extent: the largest flooded area of any single acquisition day in the wet season
     (not a union over the season, so the value is one event, not the sum of events).
-    flood_ha_per_mm: for every acquisition day with at least MIN_EVENT_RAIN_MM of rain in
-    the 3 days before it, flooded hectares divided by that rain. The yearly value is the
-    median over those days. Rain is the CHIRPS area mean (pipeline.metrics.chirps).
+    A flood per mm of rain metric was tried and removed: detected area did not follow rain in
+    the dry run, so the ratio mostly reflected the rain in the denominator.
 
 Footprint
     One acquisition rarely covers a large basin. Flooded hectares are counted only inside
@@ -51,8 +50,6 @@ Quality flags (the first condition that holds is used)
     no_data              year before 2015 or after LAST_YEAR, or no usable VV images
                          (none in the baseline window, none in the wet season, or no day
                          with enough footprint). Value is empty.
-    no_rain_events       flood_ha_per_mm only: scenes exist but none had MIN_EVENT_RAIN_MM
-                         of rain in the 3 days before. Value is empty.
     urban_unreliable     study_type urban. Value is a lower bound.
     steep_terrain        more than half of the land is steeper than 5 degrees.
     partial_year         the wet season is not over, or Sentinel-1 data may not be in yet.
@@ -92,8 +89,6 @@ MAX_SLOPE_DEG = 5
 STEEP_FRACTION = 0.5
 BASELINE_START = (1, 1)
 BASELINE_END = (4, 30)  # inclusive
-RAIN_DAYS = 3
-MIN_EVENT_RAIN_MM = 10.0
 ORBIT_REFERENCE_YEARS = ("2017-01-01", "2025-01-01")  # end exclusive
 DEFAULT_ORBIT = "DESCENDING"
 
@@ -114,7 +109,6 @@ MAX_PIXELS = 1e13
 FLAGS = (
     "ok",
     "no_data",
-    "no_rain_events",
     "urban_unreliable",
     "steep_terrain",
     "partial_year",
@@ -148,13 +142,6 @@ def row_properties(area_id, year: int, metric: str, value, quality_flag) -> dict
     }
 
 
-def ha_per_mm(flood_ha: float | None, rain_mm: float | None) -> float | None:
-    """Flooded hectares per mm of rain, or None when rain is missing or below the minimum."""
-    if flood_ha is None or rain_mm is None or rain_mm < MIN_EVENT_RAIN_MM:
-        return None
-    return flood_ha / rain_mm
-
-
 def first_match(pairs: list[tuple], default: str, iff: Callable | None = None):
     """The flag of the first (condition, flag) pair whose condition holds, else default.
 
@@ -171,7 +158,6 @@ def first_match(pairs: list[tuple], default: str, iff: Callable | None = None):
 def flag_pairs(
     *,
     no_scenes,
-    no_value,
     urban,
     steep,
     partial_year,
@@ -182,11 +168,10 @@ def flag_pairs(
 ) -> list[tuple]:
     """Priority list for first_match. Order is the documented flag priority.
 
-    `no_scenes` marks no_data, `no_value` marks no_rain_events (scenes but no value).
+    `no_scenes` marks no_data.
     """
     return [
         (no_scenes, "no_data"),
-        (no_value, "no_rain_events"),
         (urban, "urban_unreliable"),
         (steep, "steep_terrain"),
         (partial_year, "partial_year"),
@@ -257,33 +242,20 @@ def analysis_mask() -> ee.Image:
     return occurrence.lte(PERMANENT_WATER_PCT).And(terrain_slope().lte(MAX_SLOPE_DEG))
 
 
-def rain_before(day: ee.Date, geometry: ee.Geometry) -> ee.Number:
-    """CHIRPS area mean rainfall in mm over the 3 days before `day`, or None if a day is missing.
-
-    Uses chirps.daily_area_series, so the area mean is the same one the rainfall metrics use.
-    """
-    collection = (
-        ee.ImageCollection(chirps.DATASET)
-        .select(chirps.BAND)
-        .filterDate(day.advance(-RAIN_DAYS, "day"), day)
-    )
-    series = chirps.daily_area_series(collection, geometry)
-    return ee.Algorithms.If(
-        series.size().eq(RAIN_DAYS), ee.Number(series.reduce(ee.Reducer.sum())), None
-    )
-
-
 def scene_days(wet: ee.ImageCollection) -> ee.List:
     """Distinct UTC acquisition days (yyyy-MM-dd) of a collection, sorted."""
     stamps = wet.aggregate_array("system:time_start")
     return stamps.map(lambda t: ee.Date(t).format("YYYY-MM-dd")).distinct().sort()
 
 
-def scene_events(geometry: ee.Geometry, year: int, with_rain: bool) -> dict:
+def scene_events(geometry: ee.Geometry, year: int) -> dict:
     """Server side objects describing the wet season of one area and year.
 
     Returns n_baseline, n_wet, events (FeatureCollection with day, flood_ha, coverage and
-    optionally rain_mm and ratio), area_ha and steep_fraction.
+    coverage), area_ha and steep_fraction.
+
+    All sums of an area come from one reduceRegion over a stacked image (two bands per
+    acquisition day plus two terrain bands), so no reduction runs inside a map.
     """
     direction = orbit_direction(geometry)
     base_start, base_end = baseline_window(year)
@@ -303,8 +275,9 @@ def scene_events(geometry: ee.Geometry, year: int, with_rain: bool) -> dict:
         ee.Algorithms.If(area_ha.lte(FINE_SCALE_MAX_HA), SCALE_FINE_M, SCALE_COARSE_M)
     )
     pixel_ha = ee.Image.pixelArea().divide(1e4)
+    days = scene_days(wet)
 
-    def one_day(day) -> ee.Feature:
+    def day_bands(day, stack):
         start = ee.Date(day)
         scene = wet.filterDate(start, start.advance(1, "day")).mosaic()
         footprint = scene.mask().gt(0)
@@ -315,54 +288,48 @@ def scene_events(geometry: ee.Geometry, year: int, with_rain: bool) -> dict:
             .And(footprint)
             .unmask(0)
         )
-        bands = flooded.multiply(pixel_ha).rename("flood_ha")
-        bands = bands.addBands(footprint.unmask(0).multiply(pixel_ha).rename("covered_ha"))
-        sums = bands.reduceRegion(
+        flood = flooded.multiply(pixel_ha).rename(ee.String("f_").cat(day))
+        covered = footprint.unmask(0).multiply(pixel_ha).rename(ee.String("c_").cat(day))
+        return ee.Image(stack).addBands(flood).addBands(covered)
+
+    slope = terrain_slope()
+    terrain = (
+        slope.gt(MAX_SLOPE_DEG)
+        .multiply(pixel_ha)
+        .rename("steep_ha")
+        .addBands(slope.mask().multiply(pixel_ha).rename("land_ha"))
+        .unmask(0)
+    )
+    stack = ee.Image(days.iterate(day_bands, terrain))
+    sums = ee.Dictionary(
+        stack.reduceRegion(
             reducer=ee.Reducer.sum(),
             geometry=geometry,
             scale=scale,
             maxPixels=MAX_PIXELS,
             tileScale=TILE_SCALE,
         )
+    )
+
+    def one_day(day) -> ee.Feature:
+        flood = ee.Number(sums.get(ee.String("f_").cat(day)))
         props = {
             "day": day,
-            "flood_ha": ee.Number(sums.get("flood_ha")),
-            "coverage": ee.Number(sums.get("covered_ha")).divide(area_ha),
+            "flood_ha": flood,
+            "coverage": ee.Number(sums.get(ee.String("c_").cat(day))).divide(area_ha),
         }
-        if with_rain:
-            rain = rain_before(start, geometry)
-            props["rain_mm"] = rain
-            props["ratio"] = ee.Algorithms.If(
-                ee.Algorithms.IsEqual(rain, None),
-                None,
-                ee.Algorithms.If(
-                    ee.Number(rain).gte(MIN_EVENT_RAIN_MM),
-                    ee.Number(sums.get("flood_ha")).divide(rain),
-                    None,
-                ),
-            )
         return ee.Feature(None, props)
 
-    events = ee.FeatureCollection(scene_days(wet).map(one_day))
-
-    steep = (
-        terrain_slope()
-        .gt(MAX_SLOPE_DEG)
-        .reduceRegion(
-            reducer=ee.Reducer.mean(),
-            geometry=geometry,
-            scale=SCALE_COARSE_M,
-            maxPixels=MAX_PIXELS,
-            tileScale=TILE_SCALE,
-        )
-        .get("slope")
+    land = ee.Number(sums.get("land_ha", 0))
+    steep_fraction = ee.Number(
+        ee.Algorithms.If(land.gt(0), ee.Number(sums.get("steep_ha", 0)).divide(land), 0)
     )
     return {
         "n_baseline": n_baseline,
         "n_wet": n_wet,
-        "events": events,
+        "events": ee.FeatureCollection(days.map(one_day)),
         "area_ha": area_ha,
-        "steep_fraction": ee.Number(ee.Algorithms.If(steep, steep, 0)),
+        "steep_fraction": steep_fraction,
     }
 
 
@@ -370,7 +337,6 @@ def compute_flood(
     year: int,
     areas: ee.FeatureCollection,
     metric: str,
-    with_rain: bool,
     summarize: Callable[[ee.FeatureCollection], ee.Number],
     today: date | None = None,
 ) -> ee.FeatureCollection:
@@ -392,7 +358,7 @@ def compute_flood(
 
     def to_row(feature: ee.Feature) -> ee.Feature:
         geometry = feature.geometry()
-        info = scene_events(geometry, year, with_rain)
+        info = scene_events(geometry, year)
         usable = info["events"].filter(ee.Filter.gte("coverage", MIN_DAY_COVERAGE))
         n_scenes = usable.size()
         no_scenes = info["n_baseline"].eq(0).Or(info["n_wet"].eq(0)).Or(n_scenes.eq(0))
@@ -405,7 +371,6 @@ def compute_flood(
         area_type = ee.Dictionary(types).get(feature.get("area_id"), "unknown")
         pairs = flag_pairs(
             no_scenes=no_scenes,
-            no_value=ee.Algorithms.IsEqual(value, None),
             urban=ee.String(area_type).compareTo("urban").eq(0),
             steep=info["steep_fraction"].gt(STEEP_FRACTION),
             partial_year=partial_year,

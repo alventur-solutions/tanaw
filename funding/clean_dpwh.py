@@ -36,6 +36,74 @@ CATEGORY_KEYWORDS = [
 # is in the source. A pump on its own ("Booster Pump Accessories") does not match.
 PUMPING_STATION = re.compile(r"\bpump(ing)?\s+sta(ti|it)ons?\b", re.IGNORECASE)
 
+
+def _words(*patterns: str) -> re.Pattern[str]:
+    return re.compile(r"\b(?:" + "|".join(patterns) + r")\b", re.IGNORECASE)
+
+
+# Program text that names a kind of work only as a program heading ("Flood Mitigation
+# Structures and Drainage Systems", "Flood Mitigation Structures Protecting Public ...").
+# It is removed before the description is read, so it cannot set a category.
+PROGRAM_TEXT = re.compile(
+    r"flood\s+(?:mitigation|control)(?:\s+(?:structures?|facilit\w+))?"
+    r"\s*(?:and|&|/)\s*drainage(?:\s+systems?)?"
+    r"|flood\s+mitigation\s+structures?\s+protecting",
+    re.IGNORECASE,
+)
+
+# Only for a contract with no TypeofWork. The category is the work that the description names
+# first. The order here only breaks a tie at the same position. Text that names no work
+# (for example "Organizational Outcome 2" or "MFO") gives "other".
+DESCRIPTION_KEYWORDS = [
+    (
+        "slope_protection",
+        _words(r"slope\s+(?:protection|stabili[sz]ation)", r"rock\s?fall", r"landslides?"),
+    ),
+    (
+        "drainage",
+        _words(
+            r"drainage",
+            r"drains?",
+            r"(?:box\s+)?culverts?",
+            r"(?:lined\s*)?canals?",
+            r"canal\s+lining",
+            r"interceptors?",
+            r"manholes?",
+            r"catch\s+basins?",
+            r"outfalls?",
+            r"open\s+channel",
+        ),
+    ),
+    (
+        "river_structure",
+        _words(
+            r"river",
+            r"riverbank",
+            r"riverwall",
+            r"creeks?",
+            r"bank\s+(?:protection|improvement|stabili[sz]ation)",
+            r"revetments?",
+            r"dikes?",
+            r"dykes?",
+            r"levees?",
+            r"flood\s*walls?",
+            r"sea\s?walls?",
+            r"(?:fore)?shore(?:line)?\s+protection",
+            r"breakwaters?",
+            r"protection\s+walls?",
+            r"embankments?",
+            r"groundsills?",
+            r"spillways?",
+            r"gabions?",
+            r"retarding\s+(?:basin|pond)",
+            r"channel\s+improvement",
+            r"(?:diversion|cut-?off)\s+(?:channel|canal)",
+            r"flood\s+(?:control|mitigation|protection|structure)",
+            r"flood\s?gates?",
+        ),
+    ),
+]
+
 EE_COLUMNS = ["component_id", "year", "category", "amount_php", "Longitude", "Latitude"]
 LINK_COLUMNS = ["component_id", "area_id"]
 
@@ -53,6 +121,25 @@ def classify(type_of_work: str | None, description: str | None = None) -> str:
         if any(keyword in text for keyword in keywords):
             return category
     return "other"
+
+
+def classify_from_description(description: str | None) -> str:
+    """Estimated category of a contract that has no TypeofWork, from its description.
+
+    A pumping station wins (as in classify). Otherwise the work named first in the description
+    sets the category, after program headings are removed. Rows classified this way carry
+    quality_flag = category_from_description.
+    """
+    text = description or ""
+    if PUMPING_STATION.search(text):
+        return "pumping"
+    text = PROGRAM_TEXT.sub(" ", text)
+    hits = [
+        (match.start(), rank, category)
+        for rank, (category, pattern) in enumerate(DESCRIPTION_KEYWORDS)
+        if (match := pattern.search(text))
+    ]
+    return min(hits)[2] if hits else "other"
 
 
 def has_point(df: pd.DataFrame) -> pd.Series:

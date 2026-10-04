@@ -136,3 +136,29 @@ def test_records_match_the_staging_columns() -> None:
     assert row["quality_flag"] == "category_from_description"
     assert (row["lon"], row["lat"]) == (121.06, 14.66)
     assert row["project_id"] is None
+
+
+def test_description_rules_apply_only_without_type_of_work() -> None:
+    contracts = pd.DataFrame(
+        [
+            _contract(contractId="A", description="CONSTRUCTION OF RIVERBANK PROTECTION, BRGY. X"),
+            _contract(contractId="B", description="ORGANIZATIONAL OUTCOME 2: PROTECT LIVES"),
+            _contract(contractId="C", description="CONSTRUCTION OF BOX CULVERT, BRGY. X"),
+        ]
+    )
+    rows = clean(contracts, _lookup(_component(ContractID="C"))).set_index("contract_id")
+    assert rows.loc["A", "category"] == "river_structure"
+    assert rows.loc["B", "category"] == "other"
+    # In the flood control file: TypeofWork decides, the description is not read for work.
+    assert rows.loc["C", "category"] == "river_structure"
+    assert rows.loc["C", "quality_flag"] == "ok"
+    # Every row classified from the description stays an estimate.
+    assert rows.loc[["A", "B"], "quality_flag"].eq("category_from_description").all()
+
+
+def test_pumping_station_overrides_in_a_row_without_type_of_work() -> None:
+    row = clean(
+        pd.DataFrame([_contract(description="RIVERWALL AND PUMPING STATION, BRGY. X")])
+    ).iloc[0]
+    assert row["category"] == "pumping"
+    assert row["quality_flag"] == "category_from_description"

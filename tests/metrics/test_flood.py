@@ -5,14 +5,20 @@ from datetime import date
 
 import pytest
 
-from pipeline.metrics import chirps, flood_extent, flood_ha_per_mm, sar_flood
+from pipeline.metrics import (
+    CLI_ONLY_METRICS,
+    IMPLEMENTED_METRICS,
+    METRIC_NAMES,
+    chirps,
+    flood_extent,
+    sar_flood,
+)
 from pipeline.registry import METRICS
 from pipeline.run import ROW_KEYS, select_features
 from pipeline.study_areas import read_features
 
 MODULES = {
     "flood_extent": (flood_extent, "ha"),
-    "flood_ha_per_mm": (flood_ha_per_mm, "ha/mm"),
 }
 BASIN = "pasig-marikina-tullahan"
 
@@ -25,7 +31,6 @@ def flag(**overrides):
     """The flag for a healthy case, with some inputs changed."""
     inputs = dict(
         no_scenes=False,
-        no_value=False,
         urban=False,
         steep=False,
         partial_year=False,
@@ -47,8 +52,17 @@ def test_module_constants(name):
     assert "COPERNICUS/S1_GRD" in module.DATASET
 
 
-def test_per_mm_dataset_names_both_sources():
-    assert chirps.DATASET in flood_ha_per_mm.DATASET
+def test_flood_per_mm_is_removed():
+    assert not hasattr(sar_flood, "ha_per_mm")
+    assert "flood_ha_per_mm" not in METRICS
+    assert "flood_ha_per_mm" not in METRIC_NAMES
+    assert "flood_ha_per_mm" not in CLI_ONLY_METRICS
+    assert "no_rain_events" not in sar_flood.FLAGS
+
+
+def test_flood_extent_is_cli_only_and_not_exposed_to_analyze():
+    assert "flood_extent" in CLI_ONLY_METRICS
+    assert "flood_extent" not in IMPLEMENTED_METRICS
 
 
 @pytest.mark.parametrize("name", MODULES)
@@ -66,7 +80,6 @@ def test_method_constants_follow_the_skill():
     assert sar_flood.SPECKLE_RADIUS_M == 50
     assert sar_flood.baseline_window(2022) == (date(2022, 1, 1), date(2022, 4, 30))
     assert chirps.wet_season_window(2022) == (date(2022, 6, 1), date(2022, 11, 30))
-    assert sar_flood.RAIN_DAYS == 3
 
 
 def test_year_range_starts_with_sentinel_1():
@@ -90,7 +103,6 @@ def test_flag_ok():
     ("overrides", "expected"),
     [
         ({"no_scenes": True}, "no_data"),
-        ({"no_value": True}, "no_rain_events"),
         ({"urban": True}, "urban_unreliable"),
         ({"steep": True}, "steep_terrain"),
         ({"partial_year": True}, "partial_year"),
@@ -106,7 +118,6 @@ def test_each_flag(overrides, expected):
 
 def test_flag_priority():
     assert flag(no_scenes=True, urban=True, partial_year=True) == "no_data"
-    assert flag(no_value=True, urban=True) == "no_rain_events"
     assert flag(urban=True, steep=True, n_scenes=1) == "urban_unreliable"
     assert flag(steep=True, partial_year=True) == "steep_terrain"
     assert flag(partial_year=True, n_scenes=1) == "partial_year"
@@ -122,21 +133,6 @@ def test_scene_threshold_edges():
 def test_flags_are_documented():
     for name in sar_flood.FLAGS:
         assert name in sar_flood.__doc__
-
-
-def test_ha_per_mm_division():
-    assert sar_flood.ha_per_mm(120.0, 40.0) == 3.0
-    assert sar_flood.ha_per_mm(0.0, 40.0) == 0.0  # no flood on a rainy day is a real zero
-    assert sar_flood.ha_per_mm(100.0, sar_flood.MIN_EVENT_RAIN_MM) == 10.0
-
-
-@pytest.mark.parametrize("rain", [0.0, 0.5, sar_flood.MIN_EVENT_RAIN_MM - 0.01, None])
-def test_ha_per_mm_without_enough_rain_is_empty(rain):
-    assert sar_flood.ha_per_mm(100.0, rain) is None
-
-
-def test_ha_per_mm_missing_flood_is_empty():
-    assert sar_flood.ha_per_mm(None, 40.0) is None
 
 
 def test_row_properties_fields_and_empty_value():

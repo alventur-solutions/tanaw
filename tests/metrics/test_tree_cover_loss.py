@@ -2,23 +2,72 @@ import os
 
 import pytest
 
-from pipeline.metrics import IMPLEMENTED_METRICS, METRIC_NAMES, tree_cover_loss
+from pipeline.metrics import (
+    CLI_ONLY_METRICS,
+    IMPLEMENTED_METRICS,
+    METRIC_NAMES,
+    tree_cover_loss,
+)
 from pipeline.registry import METRICS
 from pipeline.run import ROW_KEYS, parse_years, select_features, to_rows
 from pipeline.study_areas import read_features
 
 BASIN = "pasig-marikina-tullahan"
-FLAGS = {"ok", "storm_year", "low_coverage", "no_data"}
+FLAGS = {"ok", "storm_year", "storm_prior_year", "low_coverage", "no_data"}
 
 
 def test_metric_is_registered():
     metric = METRICS["tree_cover_loss"]
     assert set(METRICS) <= set(METRIC_NAMES)
-    assert sorted(IMPLEMENTED_METRICS) == sorted(METRICS)
+    # Every registered metric is either enabled for /analyze or listed as CLI only, never both.
+    assert not set(IMPLEMENTED_METRICS) & set(CLI_ONLY_METRICS)
+    assert sorted(set(IMPLEMENTED_METRICS) | set(CLI_ONLY_METRICS)) == sorted(METRICS)
     assert metric.compute is tree_cover_loss.compute
     assert metric.unit == "ha"
     assert metric.dataset == "UMD/hansen/global_forest_change_2025_v1_13"
     assert (metric.first_year, metric.last_year) == (2001, 2025)
+
+
+def test_storm_years_are_per_area_and_zones_use_the_parent():
+    assert tree_cover_loss.storm_flag(BASIN, 2009) == "storm_year"
+    assert tree_cover_loss.storm_flag(BASIN + "__up", 2009) == "storm_year"
+    assert tree_cover_loss.storm_flag(BASIN + "__down", 2020) == "storm_year"
+    # The Metro Manila years are not applied to other areas.
+    assert tree_cover_loss.storm_flag("iloilo-river-basin", 2009) == "ok"
+    assert tree_cover_loss.storm_flag("iloilo-river-basin", 2013) == "storm_year"
+    assert tree_cover_loss.storm_flag("iloilo-river-basin__down", 2019) == "storm_year"
+    assert tree_cover_loss.storm_flag("cagayan-de-oro-river-basin", 2011) == "storm_year"
+
+
+def test_unknown_area_never_gets_a_storm_flag():
+    for year in (2009, 2011, 2020):
+        assert tree_cover_loss.storm_flag("not-an-area", year) == "ok"
+        assert tree_cover_loss.storm_flag("davao-river-basin", year) == "ok"
+
+
+def test_late_season_storm_flags_the_next_year_only():
+    assert tree_cover_loss.storm_flag(BASIN, 2021) == "storm_prior_year"  # Ulysses, November
+    assert tree_cover_loss.storm_flag(BASIN, 2010) == "ok"  # Ondoy, September
+    # A storm year wins when it is also the year after a late storm.
+    assert tree_cover_loss.storm_flag("bicol-river-basin", 2020) == "storm_year"
+    assert tree_cover_loss.storm_flag("bicol-river-basin", 2017) == "storm_prior_year"
+
+
+def test_storm_flags_for_a_year_cover_every_zone():
+    flags = tree_cover_loss.storm_flags(2020)
+    assert flags[BASIN] == flags[BASIN + "__up"] == flags[BASIN + "__down"] == "storm_year"
+    assert set(flags) == {
+        f"{p}{z}" for p in tree_cover_loss.STORM_YEARS for z in ("", "__up", "__down")
+    }
+
+
+def test_storm_areas_are_real_study_areas_and_years_are_in_range():
+    ids = {f["properties"]["area_id"] for f in read_features()}
+    for area_id, storms in tree_cover_loss.STORM_YEARS.items():
+        assert area_id in ids
+        assert "__" not in area_id
+        for year in storms:
+            assert tree_cover_loss.FIRST_YEAR <= year <= tree_cover_loss.LAST_YEAR
 
 
 def test_parse_years():

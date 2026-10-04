@@ -88,4 +88,4 @@ def test_first_migration_renders_offline():
         assert f"CREATE TABLE {table} " in sql
     assert "geometry(MULTIPOLYGON,4326)" in sql
     assert "geometry(POINT,4326)" in sql
-    assert sql.count("USING gist") == 3
+    assert sql.count("USING gist") == 3 + 3  # 0001 study_areas, funding, stations; 0006 OSM

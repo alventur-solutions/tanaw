@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import ee
 
 from pipeline.metrics import (
+    flood_extent,
     heavy_rain_days,
     rainfall_max_1day,
     rainfall_total,
@@ -44,7 +45,13 @@ METRICS: dict[str, Metric] = {
                 last_year=m.LAST_YEAR,
                 compute=m.compute,
             )
-            for m in (rainfall_total, rainfall_wet_season, rainfall_max_1day, heavy_rain_days)
+            for m in (
+                rainfall_total,
+                rainfall_wet_season,
+                rainfall_max_1day,
+                heavy_rain_days,
+                flood_extent,
+            )
         ],
     ]
 }

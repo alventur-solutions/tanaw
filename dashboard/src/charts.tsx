@@ -1,7 +1,16 @@
 import { useState } from 'react'
 import { CATEGORIES, formatHa, formatPhp, RAIN_METRICS, shortPhp } from './api'
 import type { MetricRow, ProjectFeature } from './api'
-import { lossAlt, lossLine, peakYear, rainAlt, rainLine, wettestYear } from './story'
+import {
+  heavyRainAlt,
+  heavyRainLine,
+  lossAlt,
+  lossLine,
+  peakYear,
+  rainAlt,
+  rainLine,
+  wettestYear,
+} from './story'
 
 const W = 420
 const H = 190
@@ -55,7 +64,10 @@ export function TreeLossChart({ series, windowYears, activeYear, onYear }: LossP
   const barW = Math.max(4, band - 5)
   const x = (year: number) => M.left + (year - years[0]) * band
   const y = (value: number) => M.top + PLOT_H - (value / max) * PLOT_H
-  const storm = (year: number) => series.some((s) => byYear(s, year)?.quality_flag === 'storm_year')
+  // A storm year and the year after one carry the same mark: late storm loss can be dated to the next year.
+  const flagged = (year: number, flag: string) => series.some((s) => byYear(s, year)?.quality_flag === flag)
+  const storm = (year: number) => flagged(year, 'storm_year') || flagged(year, 'storm_prior_year')
+  const followsStorm = years.some((year) => flagged(year, 'storm_prior_year'))
   const flags = (year: number) =>
     [...new Set(series.map((s) => byYear(s, year)?.quality_flag))].filter(Boolean)
   // A zone with no row for a year has no value. It is never shown as zero.
@@ -186,8 +198,11 @@ export function TreeLossChart({ series, windowYears, activeYear, onYear }: LossP
         )}
         {years.some(storm) && (
           <>
-            <span className="storm-key" /> Marked years are flagged as major storm years. Part
-            of that loss may be natural.
+            <span className="storm-key" />{' '}
+            {followsStorm
+              ? 'Marked years are flagged as major storm years, or follow one.'
+              : 'Marked years are flagged as major storm years.'}{' '}
+            Part of that loss may be natural.
           </>
         )}
       </figcaption>
@@ -475,5 +490,106 @@ export function StatusList({ projects }: { projects: ProjectFeature[] }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+/**
+ * Days per year when the area mean was 50 mm or more. A year that is not complete is drawn lighter.
+ * The wettest day per year is read in the line and the table, never on a second axis.
+ */
+export function HeavyRainChart({ rows, color = RAIN_COLOR }: { rows: MetricRow[]; color?: string }) {
+  const [hover, setHover] = useState<number | null>(null)
+  const days = rows.filter((r) => r.metric === 'heavy_rain_days' && r.value !== null).sort((a, b) => a.year - b.year)
+  if (days.length === 0) return <p className="empty">No heavy rain day rows for this area yet.</p>
+
+  const years = days.map((r) => r.year)
+  const max = niceMax(Math.max(...days.map((r) => r.value ?? 0)))
+  const band = PLOT_W / years.length
+  const barW = Math.max(4, band - 5)
+  const x = (year: number) => M.left + years.indexOf(year) * band
+  const y = (value: number) => M.top + PLOT_H - (value / max) * PLOT_H
+  const partial = days.some((r) => r.quality_flag === 'partial_year')
+  const wettest = (year: number) =>
+    rows.find((r) => r.metric === 'rainfall_max_1day' && r.year === year)?.value
+
+  return (
+    <figure className="chart">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={heavyRainAlt(rows)}>
+        {[0, 0.5, 1].map((t) => (
+          <g key={t}>
+            <line x1={M.left} x2={W - M.right} y1={y(max * t)} y2={y(max * t)} className="grid" />
+            <text x={M.left - 6} y={y(max * t) + 3} textAnchor="end" className="tick">
+              {(max * t).toLocaleString('en-PH', { maximumFractionDigits: 1 })}
+            </text>
+          </g>
+        ))}
+        {days.map((row) => {
+          const value = row.value ?? 0
+          return (
+            <g key={row.year} opacity={hover !== null && hover !== row.year ? 0.45 : 1}>
+              {value > 0 && (
+                <path
+                  d={bar(x(row.year) + (band - barW) / 2, y(value), barW, y(0) - y(value), true)}
+                  fill={color}
+                  fillOpacity={row.quality_flag === 'partial_year' ? 0.4 : 1}
+                />
+              )}
+              <rect
+                x={x(row.year)}
+                y={M.top}
+                width={band}
+                height={PLOT_H + 10}
+                fill="transparent"
+                className="year-target"
+                tabIndex={0}
+                aria-label={heavyRainLine(rows, row.year)}
+                onMouseEnter={() => setHover(row.year)}
+                onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(row.year)}
+                onBlur={() => setHover(null)}
+                onClick={() => setHover(row.year)}
+              />
+            </g>
+          )
+        })}
+        {years
+          .filter((year) => year % 5 === 0 || year === years[0])
+          .map((year) => (
+            <text key={year} x={x(year) + band / 2} y={H - 4} textAnchor="middle" className="tick">
+              {year}
+            </text>
+          ))}
+      </svg>
+      <p className="live" aria-live="polite">
+        {heavyRainLine(rows, hover)}
+      </p>
+      <figcaption>
+        Days per year with an area mean of 50 mm or more. A year with no such day has no bar.
+        {partial ? ' A lighter bar is a year that is not complete yet. Its value is a lower bound.' : ''}
+      </figcaption>
+      <details className="table-view">
+        <summary>Show as table</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>Year</th>
+              <th>Days with area mean of 50 mm or more</th>
+              <th>Wettest day, area mean (mm)</th>
+              <th>Quality</th>
+            </tr>
+          </thead>
+          <tbody>
+            {days.map((row) => (
+              <tr key={row.year}>
+                <td>{row.year}</td>
+                <td>{(row.value ?? 0).toFixed(0)}</td>
+                <td>{wettest(row.year)?.toFixed(0) ?? 'no value'}</td>
+                <td>{row.quality_flag}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </figure>
   )
 }
