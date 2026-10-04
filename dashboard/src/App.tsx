@@ -4,6 +4,7 @@ import {
   LOSS_COLOR,
   STUDY_TYPE_LABEL,
   UP_COLOR,
+  costSummary,
   fetchAreaData,
   fetchPoints,
   fetchProject,
@@ -12,6 +13,7 @@ import {
   fetchZones,
   formatHa,
   formatPhp,
+  lossReportingYears,
   regionOf,
   STUDY_TYPE_GROUP,
   STUDY_TYPE_ORDER,
@@ -40,6 +42,7 @@ import { mark } from './perf'
 import ProjectCard from './ProjectCard'
 import {
   categoryLede,
+  costCoverageNote,
   URBAN_NOTE,
   estimatedCategories,
   fundingLede,
@@ -589,12 +592,13 @@ function HeavyRainBeat({ rain, up, down }: { rain: MetricRow[]; up?: MetricRow[]
 
 function LandHistory({ selected, current, up, down, hasZones, onTab }: PanelProps) {
   const urban = selected.properties.study_type === 'urban'
+  const reportingYears = lossReportingYears(current.loss)
   const bridge = (
     <Bridge to="Funding" onTab={onTab}>
       What was spent on flood control here?
     </Bridge>
   )
-  if (current.loss.length === 0) {
+  if (reportingYears === null) {
     return (
       <>
         {urban && <UrbanNote />}
@@ -621,9 +625,8 @@ function LandHistory({ selected, current, up, down, hasZones, onTab }: PanelProp
         { key: 'up', label: 'Upstream', color: UP_COLOR, rows: up.loss },
       ]
     : [{ key: 'all', label: 'Tree cover loss', color: LOSS_COLOR, rows: current.loss }]
-  const years = current.loss.map((r) => r.year)
-  const from = Math.min(...years)
-  const to = Math.max(...years)
+  const [from, to] = reportingYears
+  const outsideCoverage = current.loss.some((row) => row.year < from || row.year > to)
 
   return (
     <>
@@ -633,6 +636,12 @@ function LandHistory({ selected, current, up, down, hasZones, onTab }: PanelProp
         <p className="lede">{lossLede(current.loss, from, to)}</p>
         <TreeLossChart series={series} windowYears={dataYears} />
         <ul className="caveats">
+          {outsideCoverage && (
+            <li>
+              Totals cover {from} to {to}. Years outside the source dataset's coverage are
+              unavailable and are excluded from these totals.
+            </li>
+          )}
           <li>
             Tree cover loss is canopy removed for any reason: clearing, fire, storm damage,
             landslide, or plantation harvest.
@@ -851,12 +860,21 @@ function Funding({
         <section className="beat">
           <h3>How much was sited upstream, and how much downstream?</h3>
           <p className="lede">{zoneSpendLede(zoneSpend.up, zoneSpend.down, min_year, max_year)}</p>
-          <p className="chart-label">Contract cost</p>
+          <p className="chart-label">Recorded contract cost</p>
           <ZonePair
             rows={[
-              { label: 'Upstream', color: UP_COLOR, value: sumAmount(zoneSpend.up), text: formatPhp(sumAmount(zoneSpend.up)) },
-              { label: 'Downstream', color: DOWN_COLOR, value: sumAmount(zoneSpend.down), text: formatPhp(sumAmount(zoneSpend.down)) },
-            ]}
+              { label: 'Upstream', color: UP_COLOR, projects: zoneSpend.up },
+              { label: 'Downstream', color: DOWN_COLOR, projects: zoneSpend.down },
+            ].map((zone) => {
+              const costs = costSummary(zone.projects)
+              return {
+                label: zone.label,
+                color: zone.color,
+                value: costs.knownAmount,
+                text: costs.knownAmount === null ? 'No cost on record'
+                  : `${formatPhp(costs.knownAmount)}${costs.missingCount > 0 ? ` subtotal; ${costs.missingCount} contracts without a cost` : ''}`,
+              }
+            })}
           />
           <p className="chart-label">Contracts</p>
           <ZonePair
@@ -866,6 +884,9 @@ function Funding({
             ]}
           />
           <ul className="caveats">
+            {costCoverageNote([...zoneSpend.up, ...zoneSpend.down]) && (
+              <li>{costCoverageNote([...zoneSpend.up, ...zoneSpend.down])}</li>
+            )}
             <li>
               Flood control works are usually sited along rivers and in built-up places, so a
               lower upstream share of contract cost is expected. It is not a finding.
@@ -987,8 +1008,6 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
       </section>
     )
   }
-  const loss = sumLoss(current.loss, min_year, max_year)
-  const amount = sumAmount(features)
   const years = Array.from({ length: max_year - min_year + 1 }, (_, i) => min_year + i)
   // Both zones need loss rows and at least one linked contract between them. Empty is not zero.
   const zonesLoaded =
@@ -1007,9 +1026,10 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
   const zoneLossTotal = zonesLoaded
     ? sumTotals([sumLoss(up!.loss, min_year, max_year), sumLoss(down!.loss, min_year, max_year)])
     : null
-  const zoneAmountTotal = zonesLoaded
-    ? sumAmount([...up!.projects.features, ...down!.projects.features])
+  const zoneCosts = zonesLoaded
+    ? costSummary([...up!.projects.features, ...down!.projects.features])
     : null
+  const zoneAmountTotal = zoneCosts?.knownAmount ?? null
 
   return (
     <>
@@ -1050,9 +1070,10 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
           <p className="lede">
             {zoneFinding(
               sumLoss(up!.loss, min_year, max_year),
-              loss,
-              sumAmount(up!.projects.features),
-              amount,
+              zoneLossTotal,
+              costSummary(up!.projects.features).knownAmount,
+              zoneAmountTotal,
+              (zoneCosts?.missingCount ?? 0) > 0,
             )}
           </p>
           <table className="zones">
@@ -1061,7 +1082,8 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
                 <th>Zone</th>
                 <th>Tree cover loss</th>
                 <th>Share of the loss</th>
-                <th>Share of the contract cost</th>
+                <th>Share of recorded contract cost</th>
+                <th>Contracts without a cost</th>
               </tr>
             </thead>
             <tbody>
@@ -1077,22 +1099,26 @@ function SideBySide({ selected, current, up, down, hasZones, linked, onTab }: Pa
                   </td>
                   <td>
                     {share(
-                      sumAmount(zone.data.projects.features),
+                      costSummary(zone.data.projects.features).knownAmount,
                       zoneAmountTotal,
-                    ) ?? 'No value'}
+                    ) ?? (costSummary(zone.data.projects.features).knownAmount === null ? 'No cost on record' : 'No share available')}
                   </td>
+                  <td>{costSummary(zone.data.projects.features).missingCount.toLocaleString('en-PH')}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <ul className="caveats">
+            {zoneCosts && zoneCosts.missingCount > 0 && (
+              <li>{costCoverageNote([...up!.projects.features, ...down!.projects.features])}</li>
+            )}
             <li>
               Flood control works are usually sited along rivers and in built-up places, so a
               lower upstream share of contract cost is expected. It is not a finding.
             </li>
             <li>The zones differ in size and in tree cover, so hectares are not a rate.</li>
             <li>
-              Shares are of the two zones together. The Funding tab shows the contract cost and
+              Shares are of the two zones together. The Funding tab shows recorded contract cost and
               count in each zone.
             </li>
             <li>

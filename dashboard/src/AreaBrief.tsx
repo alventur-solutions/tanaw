@@ -8,8 +8,10 @@ import {
   LOSS_COLOR,
   STUDY_TYPE_LABEL,
   UP_COLOR,
+  costSummary,
   formatHa,
   formatPhp,
+  lossReportingYears,
   regionOf,
   shortName,
   sumAmount,
@@ -39,6 +41,7 @@ import type { ReviewList } from './review'
 import {
   URBAN_NOTE,
   categoryLede,
+  costCoverageNote,
   fundingLede,
   lossLede,
   rainLede,
@@ -108,13 +111,15 @@ function ReviewTable({ list }: { list: ReviewList }) {
   const caveats = list.caveats.filter((caveat) => !PRINTED_ONCE.includes(caveat))
   return (
     <div className="brief-list">
-      <h3>{list.label}</h3>
-      <p>
-        {listCountLine(list)} {list.why}
-      </p>
-      <p>
-        <strong>What to check:</strong> {list.check}
-      </p>
+      <div className="brief-list-intro">
+        <h3>{list.label}</h3>
+        <p>
+          {listCountLine(list)} {list.why}
+        </p>
+        <p>
+          <strong>What to check:</strong> {list.check}
+        </p>
+      </div>
       <table>
         <thead>
           <tr>
@@ -179,10 +184,10 @@ function AreaBrief({ selected, current, up, down, hasZones, linked, today }: Pro
         { key: 'up', label: 'Upstream', color: UP_COLOR, rows: up.loss },
       ]
     : [{ key: 'all', label: 'Tree cover loss', color: LOSS_COLOR, rows: current.loss }]
-  const lossYears = current.loss.map((r) => r.year)
-  const from = Math.min(...lossYears)
-  const to = Math.max(...lossYears)
-  const hasLoss = current.loss.length > 0
+  const reportingYears = lossReportingYears(current.loss)
+  const [from, to] = reportingYears ?? [0, -1]
+  const hasLoss = reportingYears !== null
+  const outsideCoverage = current.loss.some((row) => row.year < from || row.year > to)
   const lossSource = current.loss.find((r) => r.source_version)?.source_version ?? null
   const rainSource = current.rain.find((r) => r.source_version)?.source_version ?? null
 
@@ -235,6 +240,12 @@ function AreaBrief({ selected, current, up, down, hasZones, linked, today }: Pro
               />
               {zoned && <p>{zoneLossLede(up.loss, down.loss, from, to)}</p>}
               <ul className="brief-notes">
+                {outsideCoverage && (
+                  <li>
+                    Totals cover {from} to {to}. Years outside the source dataset's coverage are
+                    unavailable and are excluded from these totals.
+                  </li>
+                )}
                 <li>
                   This is gross loss: canopy removed for any reason, including clearing, fire,
                   storm damage, landslide, and plantation harvest. Regrowth and new planting are
@@ -353,12 +364,14 @@ function AreaBrief({ selected, current, up, down, hasZones, linked, today }: Pro
                 {zoneFinding(
                   sumLoss(up.loss, min_year, max_year),
                   sumLoss(current.loss, min_year, max_year),
-                  sumAmount(up.projects.features),
-                  sumAmount(features),
+                  costSummary(up.projects.features).knownAmount,
+                  costSummary([...up.projects.features, ...down.projects.features]).knownAmount,
+                  costSummary([...up.projects.features, ...down.projects.features]).missingCount > 0,
                 )}
               </p>
             )}
             <ul className="brief-notes">
+              {costCoverageNote(features) && <li>{costCoverageNote(features)}</li>}
               <li>These figures sit side by side. They do not show that one caused the other.</li>
               {zonesTogether && (
                 <>

@@ -1,6 +1,6 @@
 // The sentences around each chart. Pure functions: the rows a chart draws go in, a string comes
 // out, so the text and the bars cannot drift apart.
-import { CATEGORIES, formatHa, formatMm, formatPhp, sumAmount, sumLoss, sumTotals } from './api'
+import { CATEGORIES, costSummary, formatHa, formatMm, formatPhp, sumAmount, sumLoss, sumTotals } from './api'
 import type { MetricRow, ProjectFeature, ProjectProps } from './api'
 
 interface Rows {
@@ -135,23 +135,31 @@ export function zoneLossLede(up: MetricRow[], down: MetricRow[], from: number, t
 
 function noCost(features: ProjectFeature[]): string {
   const count = features.filter((f) => f.properties.amount_php == null).length
-  return count === 0 ? '' : ` ${count.toLocaleString('en-PH')} of them ${count === 1 ? 'has' : 'have'} no contract cost on record.`
+  return count === 0 ? '' : ` ${plural(count, 'contract')} ${count === 1 ? 'has' : 'have'} no contract cost on record.`
+}
+
+export function costCoverageNote(features: ProjectFeature[]): string | null {
+  const { missingCount } = costSummary(features)
+  if (missingCount === 0) return null
+  return `${plural(missingCount, 'contract')} ${missingCount === 1 ? 'has' : 'have'} no cost on record and ${missingCount === 1 ? 'is' : 'are'} excluded from cost subtotals and shares. These figures describe recorded costs, not the complete contract cost.`
 }
 
 export function fundingLede(features: ProjectFeature[], from: number, to: number): string {
   if (features.length === 0) {
     return `No DPWH flood control contracts are recorded here ${span(from, to)}.`
   }
-  const amount = sumAmount(features)
-  if (amount === null) {
+  const { knownAmount, knownCount, missingCount } = costSummary(features)
+  if (missingCount > 0) {
     return (
-      `${plural(features.length, 'DPWH flood control contract')} were sited here ${span(from, to)}, ` +
-      `but a complete contract cost total is not available.${noCost(features)}`
+      `${plural(features.length, 'DPWH flood control contract')} ${features.length === 1 ? 'was' : 'were'} sited here ${span(from, to)}. ` +
+      (knownAmount === null
+        ? 'No contract cost is on record for these contracts.'
+        : `${formatPhp(knownAmount)} is recorded for ${plural(knownCount, 'contract')} with a cost. This is a subtotal.${noCost(features)}`)
     )
   }
   return (
     `${plural(features.length, 'DPWH flood control contract')} with a total contract cost of ` +
-    `${formatPhp(amount)} ${features.length === 1 ? 'was' : 'were'} sited here ${span(from, to)}.` +
+    `${formatPhp(knownAmount)} ${features.length === 1 ? 'was' : 'were'} sited here ${span(from, to)}.` +
     noCost(features)
   )
 }
@@ -200,10 +208,7 @@ export function sideLede(loss: MetricRow[], features: ProjectFeature[], from: nu
   if (features.length === 0) {
     return `${land}No DPWH flood control contracts appear in this data here in the same period.`
   }
-  return (
-    `${land}In the same period, ${plural(features.length, 'DPWH flood control contract')} with a contract cost of ` +
-    `${formatPhp(sumAmount(features))} ${features.length === 1 ? 'was' : 'were'} sited here.${noCost(features)}`
-  )
+  return `${land}${fundingLede(features, from, to)}`
 }
 
 /** The line under the two linked charts. It reads both figures for the year in focus. */
@@ -218,8 +223,7 @@ export function sideLine(loss: MetricRow[], features: ProjectFeature[], year: nu
   const money =
     inYear.length === 0
       ? 'No DPWH flood control contracts in this data carry this infrastructure year here.'
-      : `${plural(inYear.length, 'DPWH flood control contract')} with a contract cost of ` +
-        `${formatPhp(sumAmount(inYear))} ${inYear.length === 1 ? 'carries' : 'carry'} this infrastructure year here.${noCost(inYear)}`
+      : fundingLede(inYear, year, year)
   return `In ${year}, ${land}. ${money}${flagNote([row?.quality_flag])}`
 }
 
@@ -228,12 +232,13 @@ export function zoneFinding(
   loss: number | null,
   upAmount: number | null,
   amount: number | null,
+  partialCosts = false,
 ): string {
   const land = share(upLoss, loss)
   const money = share(upAmount, amount)
   const parts = [
     land && `${land} of the basin's tree cover loss`,
-    money && `${money} of the basin's DPWH flood control contract cost`,
+    money && `${money} of the basin's ${partialCosts ? 'recorded ' : ''}DPWH flood control contract cost`,
   ].filter(Boolean)
   if (parts.length === 0) {
     const landKnown = upLoss !== null && loss !== null
@@ -495,12 +500,13 @@ export function placeLede(features: ProjectFeature[]): string {
 export function zoneSpendLede(up: ProjectFeature[], down: ProjectFeature[], from: number, to: number): string {
   const both = up.length + down.length
   if (both === 0) return `No DPWH flood control contracts are sited in either zone ${span(from, to)}.`
-  const totalCost = sumAmount([...up, ...down])
-  const cost = share(sumAmount(up), totalCost)
+  const summary = costSummary([...up, ...down])
+  const totalCost = summary.knownAmount
+  const cost = share(costSummary(up).knownAmount, totalCost)
   const count = `${up.length.toLocaleString('en-PH')} of the ${plural(both, 'contract')} in the two zones`
   return cost === null
-    ? `Upstream holds ${count} ${span(from, to)}. ${totalCost === null ? 'A complete contract cost comparison is unavailable because some costs are missing.' : 'Reported contract costs total PHP 0 in the two zones.'}`
-    : `Upstream holds ${count} and ${cost} of their contract cost ${span(from, to)}.`
+    ? `Upstream holds ${count} ${span(from, to)}. ${totalCost === null ? 'No contract costs are on record in the two zones.' : totalCost === 0 ? 'Recorded contract costs total PHP 0 in the two zones.' : 'No contract costs are on record upstream.'}`
+    : `Upstream holds ${count} and ${cost} of their ${summary.missingCount > 0 ? 'recorded ' : ''}contract cost ${span(from, to)}.`
 }
 
 // How often heavy rain fell. A heavy rain day is a day when the area mean was 50 mm or more.

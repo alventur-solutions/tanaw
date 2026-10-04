@@ -226,6 +226,18 @@ export function shortPhp(value: number | null): string {
   return Math.round(value).toLocaleString('en-PH')
 }
 
+/** Use the source's reporting years, retaining missing values within its coverage. */
+export function lossReportingYears(rows: MetricRow[]): [number, number] | null {
+  const years = rows.filter((row) => {
+    const hansen = /^UMD\/hansen\/global_forest_change_(\d{4})_v\d+_\d+$/.exec(
+      row.source_version ?? '',
+    )
+    // Unknown sources keep their requested years; a null value never defines coverage.
+    return !hansen || (row.year >= 2001 && row.year <= Number(hansen[1]))
+  }).map((row) => row.year)
+  return years.length > 0 ? [Math.min(...years), Math.max(...years)] : null
+}
+
 export function sumLoss(rows: MetricRow[], from: number, to: number): number | null {
   if (to < from) return null
   const byYear = new Map<number, MetricRow>(
@@ -240,6 +252,18 @@ export function sumLoss(rows: MetricRow[], from: number, to: number): number | n
     total += row.value
   }
   return total
+}
+
+/** Sum only recorded costs and carry their coverage alongside the subtotal. */
+export function costSummary(features: ProjectFeature[]) {
+  const known = features.filter((feature) => feature.properties.amount_php != null)
+  return {
+    knownAmount: known.length > 0 || features.length === 0
+      ? known.reduce((total, feature) => total + feature.properties.amount_php!, 0)
+      : null,
+    knownCount: known.length,
+    missingCount: features.length - known.length,
+  }
 }
 
 export function sumAmount(features: ProjectFeature[]): number | null {

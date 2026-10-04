@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CATEGORIES, formatHa, formatPhp, RAIN_METRICS, shortPhp, sumAmount } from './api'
+import { CATEGORIES, costSummary, formatHa, formatPhp, RAIN_METRICS, shortPhp, sumAmount } from './api'
 import type { MetricRow, ProjectFeature } from './api'
 import {
   heavyRainAlt,
@@ -393,10 +393,12 @@ interface FundingYearProps {
 export function FundingYearChart({ projects, years, activeYear = null, onYear }: FundingYearProps) {
   const rows = years.map((year) => {
     const inYear = projects.filter((p) => p.properties.year === year)
+    const costs = costSummary(inYear)
     return {
       year,
       count: inYear.length,
-      amount: sumAmount(inYear),
+      amount: costs.knownAmount,
+      missing: costs.missingCount,
     }
   })
   const knownAmounts = rows.flatMap((row) => (row.amount === null ? [] : [row.amount]))
@@ -409,7 +411,7 @@ export function FundingYearChart({ projects, years, activeYear = null, onYear }:
 
   return (
     <figure className="chart">
-      <svg viewBox={`0 0 ${W} ${height}`} role="img" aria-label="DPWH contract cost per year">
+      <svg viewBox={`0 0 ${W} ${height}`} role="img" aria-label="Recorded DPWH contract cost per year">
         <line x1={M.left} x2={W - M.right} y1={y(0)} y2={y(0)} className="grid" />
         {rows.map((row, i) => {
           const cx = M.left + i * band + band / 2
@@ -425,7 +427,7 @@ export function FundingYearChart({ projects, years, activeYear = null, onYear }:
               onBlur={onYear && (() => onYear(null))}
               onClick={onYear && (() => onYear(row.year))}
             >
-              <title>{`${row.year}: ${formatPhp(row.amount)}, ${row.count} ${row.count === 1 ? 'contract' : 'contracts'}`}</title>
+              <title>{`${row.year}: ${formatPhp(row.amount)}${row.missing > 0 ? ' recorded subtotal' : ''}, ${row.count} contracts; ${row.missing} without a cost on record`}</title>
               {row.amount === null ? (
                 <text x={cx} y={height - 34} textAnchor="middle" className="tick">
                   ?
@@ -434,7 +436,7 @@ export function FundingYearChart({ projects, years, activeYear = null, onYear }:
                 <path d={bar(cx - barW / 2, y(row.amount), barW, y(0) - y(row.amount), true)} className="funding-bar" />
               )}
               <text x={cx} y={row.amount === null ? height - 44 : y(row.amount) - 6} textAnchor="middle" className="value">
-                {row.count === 0 ? '0' : shortPhp(row.amount)}
+                {row.amount === null ? 'No cost' : `${shortPhp(row.amount)}${row.missing > 0 ? '*' : ''}`}
               </text>
               <text x={cx} y={height - 18} textAnchor="middle" className="tick strong">
                 {row.year}
@@ -447,8 +449,9 @@ export function FundingYearChart({ projects, years, activeYear = null, onYear }:
         })}
       </svg>
       <figcaption>
-        Contract cost in PHP (nominal). B is billion, M is million. The number under each year is
-        the count of contracts. A question mark means one or more contracts has no cost on record.
+        Recorded contract cost in PHP (nominal). B is billion, M is million. The number under each
+        year counts all contracts. An asterisk marks a subtotal that excludes contracts with no cost
+        on record. A question mark means no contract costs are recorded for that year.
       </figcaption>
       <details className="table-view">
         <summary>Show as table</summary>
@@ -457,7 +460,8 @@ export function FundingYearChart({ projects, years, activeYear = null, onYear }:
             <tr>
               <th>Year</th>
               <th>Contracts</th>
-              <th>Contract cost</th>
+              <th>Recorded contract cost</th>
+              <th>Contracts without a cost</th>
             </tr>
           </thead>
           <tbody>
@@ -465,7 +469,8 @@ export function FundingYearChart({ projects, years, activeYear = null, onYear }:
               <tr key={row.year}>
                 <td>{row.year}</td>
                 <td>{row.count.toLocaleString('en-PH')}</td>
-                <td>{formatPhp(row.amount)}</td>
+                <td>{row.amount === null ? 'No cost on record' : `${formatPhp(row.amount)}${row.missing > 0 ? ' (subtotal)' : ''}`}</td>
+                <td>{row.missing.toLocaleString('en-PH')}</td>
               </tr>
             ))}
           </tbody>
